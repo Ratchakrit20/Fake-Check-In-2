@@ -1,0 +1,33 @@
+services:
+  api:
+    build: .
+    command: python -m backend.app.main
+    ports: ["8000:8000"]
+    environment:
+      DATABASE__URL: postgresql+asyncpg://image_relation:image_relation@postgres:5432/image_relation
+      APP__RELOAD: "false"
+      JOBS__BROKER_URL: redis://redis:6379/0
+      JOBS__RESULT_BACKEND: redis://redis:6379/1
+    volumes: ["image_data:/app/data"]
+    depends_on: [postgres, redis]
+  worker:
+    build: .
+    command: python -m celery -A backend.app.workers.celery_app worker --loglevel=INFO
+    environment:
+      DATABASE__URL: postgresql+asyncpg://image_relation:image_relation@postgres:5432/image_relation
+      JOBS__BROKER_URL: redis://redis:6379/0
+      JOBS__RESULT_BACKEND: redis://redis:6379/1
+    volumes: ["image_data:/app/data"]
+    depends_on: [postgres, redis]
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: image_relation
+      POSTGRES_PASSWORD: image_relation
+      POSTGRES_DB: image_relation
+    volumes: ["postgres_data:/var/lib/postgresql/data"]
+  redis:
+    image: redis:7-alpine
+volumes:
+  image_data:
+  postgres_data:

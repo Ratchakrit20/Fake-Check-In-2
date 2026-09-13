@@ -1,0 +1,9 @@
+name: fake-check-in
+channels:
+  - conda-forge
+dependencies:
+  - python=3.11
+  - pip
+  - nodejs=22
+  - pip:
+      - "-e .[dev]"

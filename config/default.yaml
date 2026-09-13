@@ -1,0 +1,100 @@
+app:
+  name: Image Relation Inspector
+  api_prefix: /api/v1
+  reload: true
+  max_upload_files: 1000
+  max_file_size_mb: 20
+  max_image_pixels: 80000000
+  allowed_mime_types: [image/jpeg, image/png, image/webp, image/tiff, image/bmp]
+storage:
+  root: data/images
+database:
+  url: sqlite+aiosqlite:///./data/app.db
+embedding:
+  enabled: true
+  provider: dinov2
+  model: dinov2_vits14
+  version: facebookresearch/dinov2:v1
+  cache_dir: data/models/torch
+  device: auto
+  normalize: true
+  batch_size: 0 # 0 = เลือกอัตโนมัติตาม CPU/VRAM
+  allow_cpu_fallback: true
+vector_search:
+  provider: faiss
+  index_path: data/faiss/index.bin
+  metadata_path: data/faiss/ids.json
+  top_k: 50
+phash:
+  enabled: true
+  hash_size: 8
+  max_hamming_distance: 10
+sift:
+  enabled: true
+  max_dimension: 1280
+  contrast_threshold: 0.02
+  edge_threshold: 15
+  sigma: 1.2
+  ratio_threshold: 0.75
+  min_good_matches: 12
+ransac:
+  enabled: true
+  reprojection_threshold: 5.0
+  min_inlier_ratio: 0.30
+  min_inliers: 8
+flip_detection:
+  horizontal: true
+body_parts:
+  enabled: true
+  model_path: data/models/human_mask/organ.pt
+  config_dir: data/models/ultralytics
+  device: auto
+  image_size: 640
+  confidence: 0.35
+  cache_size: 256
+  identity_classes: [head, neck]
+  major_classes: [torso, uarm, larm, uleg, lleg]
+  reuse_classes: [torso, uarm, larm, uleg, lleg, hand, foot]
+  min_reuse_classes: 2
+  min_reuse_inliers: 18
+  min_major_inliers: 10
+  identity_min_inliers: 50
+  single_part_suspect_min_inliers: 18
+relationship:
+  exact_duplicate: 1.0
+  very_high_threshold: 0.90
+  high_threshold: 0.80
+  possible_threshold: 0.65
+  graph_edge_threshold: 0.65
+  partial_reuse_min_inliers: 30
+  partial_reuse_min_inlier_ratio: 0.20
+  background_replaced_min_embedding_similarity: 0.45
+  same_image_phash_max: 4
+  same_image_min_inlier_ratio: 0.50
+  recapture_min_inliers: 40
+  recapture_min_inlier_ratio: 0.30
+  recapture_min_coverage: 0.18
+  recapture_min_embedding_similarity: 0.60
+  blur_variance_threshold: 160.0
+  blurred_crop_min_inliers: 12
+  blurred_crop_min_inlier_ratio: 0.25
+  blurred_crop_min_embedding_similarity: 0.55
+  blurred_crop_max_phash_distance: 22
+  weights:
+    phash: 0.20
+    embedding: 0.30
+    sift: 0.15
+    ransac: 0.35
+jobs:
+  broker_url: redis://localhost:6379/0
+  result_backend: redis://localhost:6379/1
+  worker_count: 2
+performance:
+  auto_tune: true
+  cpu_workers: 0 # 0 = เลือกอัตโนมัติจากจำนวนคอร์
+  opencv_threads: 0 # 0 = แบ่ง thread ให้เหมาะกับจำนวน worker
+  pair_chunk_size: 16
+  candidate_min_similarity: 0.20 # ค่อนข้างผ่อนเพื่อไม่ให้ภาพครอป/เบลอตกหล่น
+logging:
+  level: INFO
+configuration_version: "1"
