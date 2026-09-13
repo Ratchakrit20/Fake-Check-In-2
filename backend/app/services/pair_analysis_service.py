@@ -79,7 +79,11 @@ class PairAnalysisService:
                 and flipped_ransac.inlier_ratio >= self.settings.ransac.min_inlier_ratio
                 and flipped_ransac.inlier_ratio >= normal_ransac.inlier_ratio + 0.10
             )
-            if hash_confirms_flip and geometry_confirms_flip:
+            absolute_flip_geometry = (
+                flipped_ransac.inlier_count >= self.settings.ransac.min_inliers
+                and flipped_ransac.inlier_ratio >= self.settings.ransac.min_inlier_ratio
+            )
+            if geometry_confirms_flip or (hash_confirms_flip and absolute_flip_geometry):
                 best_sift, best_ransac, transform = flipped_sift, flipped_ransac, "horizontal_flip"
         distance = flip_hash_distance if transform == "horizontal_flip" and flip_hash_distance is not None else normal_hash_distance
         body_gate, body_suspected, similar_person_only, body_part_inliers = False, False, False, {}
