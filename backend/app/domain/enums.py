@@ -17,6 +17,7 @@ class RelationClassification(StrEnum):
     BACKGROUND_REPLACED = "background_replaced"
     SIMILAR_PERSON = "similar_person"
     SAME_SCENE_NEW_CAPTURE = "same_scene_new_capture"
+    REPEATED_CHECKIN = "repeated_checkin"
     UNRELATED = "unrelated"
 
 

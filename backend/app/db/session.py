@@ -1,4 +1,4 @@
-from sqlalchemy import event
+from sqlalchemy import event, text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from ..core.config import get_settings
@@ -28,6 +28,9 @@ SessionFactory = async_sessionmaker(engine, expire_on_commit=False)
 async def init_database() -> None:
     async with engine.begin() as connection:
         await connection.run_sync(Base.metadata.create_all)
+        await connection.execute(
+            text("CREATE INDEX IF NOT EXISTS ix_pair_level_score ON pairwise_results (relationship_level, relationship_score)")
+        )
 
 
 async def get_session():

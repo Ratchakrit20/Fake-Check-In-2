@@ -36,6 +36,9 @@ class EmbeddingConfig(BaseModel):
     model: str
     version: str
     cache_dir: Path
+    model_path: Path
+    model_url: str
+    input_size: int = Field(ge=224, le=1024)
     device: Literal["cpu", "cuda", "mps", "auto"] = "auto"
     normalize: bool = True
     batch_size: int = Field(ge=0)
@@ -116,6 +119,14 @@ class RelationshipConfig(BaseModel):
     partial_reuse_min_inliers: int = Field(gt=0)
     partial_reuse_min_inlier_ratio: float = Field(gt=0, le=1)
     background_replaced_min_embedding_similarity: float = Field(ge=0, le=1)
+    foreground_source_min_inliers: int = Field(gt=0)
+    foreground_source_min_inlier_ratio: float = Field(gt=0, le=1)
+    foreground_source_min_coverage: float = Field(gt=0, le=1)
+    repeated_checkin_min_foreground_inliers: int = Field(gt=0)
+    repeated_checkin_min_foreground_ratio: float = Field(gt=0, le=1)
+    repeated_checkin_min_foreground_coverage: float = Field(gt=0, le=1)
+    repeated_checkin_min_identity_inliers: int = Field(gt=0)
+    repeated_checkin_min_reuse_inliers: int = Field(gt=0)
     same_image_phash_max: int = Field(ge=0)
     same_image_min_inlier_ratio: float = Field(gt=0, le=1)
     recapture_min_inliers: int = Field(gt=0)
@@ -127,6 +138,10 @@ class RelationshipConfig(BaseModel):
     blurred_crop_min_inlier_ratio: float = Field(gt=0, le=1)
     blurred_crop_min_embedding_similarity: float = Field(ge=0, le=1)
     blurred_crop_max_phash_distance: int = Field(ge=0)
+    blurred_whole_min_inliers: int = Field(gt=0)
+    blurred_whole_min_inlier_ratio: float = Field(gt=0, le=1)
+    blurred_whole_min_coverage: float = Field(gt=0, le=1)
+    blurred_whole_strong_inlier_ratio: float = Field(gt=0, le=1)
     weights: RelationshipWeights
 
     @model_validator(mode="after")
@@ -196,7 +211,17 @@ def get_settings() -> Settings:
     with path.open("r", encoding="utf-8") as handle:
         data = yaml.safe_load(handle)
     settings = Settings.model_validate(_apply_environment(data))
-    for field in (settings.storage.root, settings.vector_search.index_path, settings.vector_search.metadata_path):
+    path_fields = (
+        (settings.storage, "root"),
+        (settings.embedding, "cache_dir"),
+        (settings.embedding, "model_path"),
+        (settings.vector_search, "index_path"),
+        (settings.vector_search, "metadata_path"),
+        (settings.body_parts, "model_path"),
+        (settings.body_parts, "config_dir"),
+    )
+    for section, field_name in path_fields:
+        field = getattr(section, field_name)
         if not field.is_absolute():
-            field = ROOT / field
+            setattr(section, field_name, ROOT / field)
     return settings

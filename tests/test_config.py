@@ -12,7 +12,9 @@ def config_data():
 
 
 def test_default_config_is_valid():
-    assert Settings.model_validate(config_data()).vector_search.top_k == 50
+    settings = Settings.model_validate(config_data())
+    assert settings.embedding.provider == "sscd"
+    assert settings.vector_search.top_k == 30
 
 
 def test_invalid_threshold_order_fails_fast():

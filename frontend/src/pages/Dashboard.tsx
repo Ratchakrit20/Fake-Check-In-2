@@ -14,7 +14,7 @@ export function Dashboard() {
   ] as const;
   return <section><header className="page-head"><div><p className="eyebrow">ศูนย์ตรวจสอบหลักฐานภาพ</p><h1>ภาพรวมระบบ</h1><p>ตรวจหาภาพซ้ำ ภาพดัดแปลง และความสัมพันธ์ด้วยหลักฐานหลายรูปแบบ</p></div><div className="live"><span/>LIVE</div></header>
     <div className="metric-grid">{cards.map(([label, value, Icon, color]) => <article className="metric" key={label}><div className={`metric-icon ${color}`}><Icon size={21}/></div><span>{label}</span><strong>{value.toLocaleString()}</strong></article>)}</div>
-    <div className="panel"><div className="panel-head"><div><h2>ลำดับการวิเคราะห์</h2><p>สัญญาณราคาถูกก่อน แล้วตรวจเชิงลึกเฉพาะภาพผู้สมัคร</p></div></div><div className="pipeline">{["SHA-256", "pHash", "DINOv2", "Vector Search", "SIFT", "RANSAC", "Score Fusion"].map((item, i) => <div key={item}><span>{String(i + 1).padStart(2, "0")}</span><strong>{item}</strong></div>)}</div></div>
+    <div className="panel"><div className="panel-head"><div><h2>ลำดับการวิเคราะห์</h2><p>คัดกรองเร็วด้วยลายนิ้วมือภาพ แล้วใช้เรขาคณิตยืนยันเฉพาะคู่ที่น่าสงสัย</p></div></div><div className="pipeline">{["SHA-256", "pHash", "SSCD", "FAISS", "SIFT", "RANSAC", "Body Verify"].map((item, i) => <div key={item}><span>{String(i + 1).padStart(2, "0")}</span><strong>{item}</strong></div>)}</div></div>
   </section>;
 }
 

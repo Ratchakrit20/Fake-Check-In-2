@@ -61,6 +61,7 @@ class PairwiseResult(Base):
     __table_args__ = (
         UniqueConstraint("image_a_id", "image_b_id", name="uq_pair"),
         Index("ix_pair_score", "relationship_score"),
+        Index("ix_pair_level_score", "relationship_level", "relationship_score"),
     )
 
 

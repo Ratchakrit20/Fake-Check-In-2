@@ -18,7 +18,7 @@ import {
 
 const stageNames: Record<string, string> = {
   QUEUED: "กำลังเข้าคิว",
-  EMBEDDING: "กำลังสร้าง DINOv2 embedding",
+  EMBEDDING: "กำลังสร้าง SSCD fingerprint",
   SEARCHING: "กำลังค้นหาภาพที่คล้าย",
   VERIFYING: "กำลังตรวจ SIFT, RANSAC และอวัยวะ",
   COMPLETED: "วิเคราะห์เสร็จแล้ว",

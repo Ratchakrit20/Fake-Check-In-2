@@ -1,5 +1,9 @@
 class RelationshipGraphService:
     @staticmethod
+    def qualified_edges(edges: list[tuple[str, str, float]], minimum_score: float) -> list[tuple[str, str]]:
+        return [(first, second) for first, second, score in edges if score >= minimum_score]
+
+    @staticmethod
     def connected_components(nodes: list[str], edges: list[tuple[str, str]]) -> list[list[str]]:
         adjacency = {node: set() for node in nodes}
         for first, second in edges:

@@ -5,6 +5,7 @@ import { getGroups, ImageGroup } from "../api/client";
 const classificationNames: Record<string, string> = {
   exact_file: "ไฟล์เดียวกัน 100%", same_image: "ภาพเดียวกันแต่ไฟล์ต่างกัน",
   edited_or_cropped: "ภาพเดิมถูกดัดแปลง", background_replaced: "สงสัยเปลี่ยนฉาก",
+  same_scene_new_capture: "ตรวจพบสถานที่เดิมข้ามงาน", repeated_checkin: "สงสัยเช็กอินซ้ำ",
 };
 
 export function Groups() {

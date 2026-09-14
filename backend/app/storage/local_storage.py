@@ -27,3 +27,8 @@ class LocalImageStorage(ImageStorage):
             return None
         matches = [path.resolve() for path in folder.glob(f"{image_id}.*") if path.is_file()]
         return matches[0] if len(matches) == 1 else None
+
+    def ensure_available(self, image_id: str, stored_path: str | Path, suffix: str, content: bytes) -> Path:
+        """Restore an uploaded duplicate when its database row outlived the file."""
+        resolved = self.resolve(image_id, stored_path)
+        return resolved if resolved is not None else self.save(image_id, suffix, content)

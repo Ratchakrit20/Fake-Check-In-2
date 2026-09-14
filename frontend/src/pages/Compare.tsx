@@ -9,7 +9,7 @@ const evidenceLabels: Record<string, string> = {
   phash_normal_distance: "ความต่างเมื่อวางภาพปกติ",
   phash_flip_distance: "ความต่างเมื่อลองกลับภาพ",
   phash_max_distance: "ค่าความต่างสูงสุด",
-  embedding_similarity: "ความคล้ายของเนื้อหา",
+  embedding_similarity: "ความคล้ายเชิงสำเนาจาก SSCD",
   sift_good_matches: "จุดภาพที่ตรงกัน",
   sift_reference_features: "จุดอ้างอิงที่พบ",
   ransac_inliers: "จุดที่ยืนยันตำแหน่งได้",
@@ -21,11 +21,21 @@ const evidenceLabels: Record<string, string> = {
   body_reuse_suspected: "อวัยวะหนึ่งส่วนเข้าข่ายถูกใช้ซ้ำ",
   similar_person_only: "พบเฉพาะใบหน้า/ลำคอที่คล้าย",
   body_part_inliers: "จุดตรงกันแยกตามอวัยวะ",
+  foreground_ransac_inliers: "จุดยืนยันบนตัวบุคคล",
+  foreground_ransac_ratio: "สัดส่วนจุดถูกต้องบนตัวบุคคล",
+  foreground_coverage: "พื้นที่ตัวบุคคลที่ยืนยันได้",
+  foreground_source_reuse: "ยืนยันการนำ foreground เดิมมาใช้",
+  repeated_checkin_suspected: "สงสัยเช็กอินซ้ำด้วยคนและสถานที่เดิม",
+  background_ransac_inliers: "จุดยืนยันบนฉากหลัง",
+  background_ransac_ratio: "สัดส่วนจุดถูกต้องบนฉากหลัง",
+  background_coverage: "พื้นที่ฉากหลังที่ยืนยันได้",
+  same_location_suspected: "ตรวจพบสถานที่เดิมข้ามงาน",
   ransac_coverage: "พื้นที่ภาพเดิมที่ยืนยันได้",
   recapture_suspected: "สงสัยถ่ายซ้ำจากหน้าจอ",
   blur_variance_a: "ความคมชัดภาพ A",
   blur_variance_b: "ความคมชัดภาพ B",
   blurred_crop_suspected: "ตรวจพบภาพเบลอหรือครอปจากภาพเดิม",
+  whole_image_fallback_used: "ใช้อัตราตรงกันทั้งภาพแทนอวัยวะที่ตรวจไม่ครบ",
 };
 
 function thaiConclusion(result: RelationshipResult): { title: string; detail: string } {
@@ -55,7 +65,10 @@ function thaiConclusion(result: RelationshipResult): { title: string; detail: st
     return { title: "ภาพเดิมถูกดัดแปลง", detail: "พบหลักฐานว่าภาพมาจากแหล่งเดียวกัน เช่น ย่อ ขยาย ครอป หมุน ปรับสี หรือบีบอัดใหม่" };
   }
   if (result.classification === "same_scene_new_capture") {
-    return { title: "น่าจะเป็นภาพที่ถ่ายใหม่ในสถานที่เดิม", detail: "ฉากมีจุดตรงกัน แต่ยังไม่พบหลักฐานว่าบุคคลหรืออวัยวะถูกนำมาจากภาพเดิม" };
+    return { title: "ตรวจพบสถานที่เดิมข้ามงาน", detail: "ฉากหลังตรงกันทางเรขาคณิต แม้ตัวบุคคลหรือวันถ่ายอาจต่างกัน ระบบจึงส่งเข้ากลุ่มตรวจสอบ" };
+  }
+  if (result.classification === "repeated_checkin") {
+    return { title: "สงสัยใช้คนและสถานที่เดิมข้ามงาน", detail: "ฉากหลังตรงกันมาก และยังพบหลักฐานแยกต่างหากทั้งบริเวณระบุตัวบุคคลและลำตัว ควรตรวจสอบประวัติงาน" };
   }
   return { title: "ไม่พบว่าเป็นภาพเดียวกัน", detail: "หลักฐานที่ตรวจพบยังไม่แสดงความสัมพันธ์ที่ชัดเจน" };
 }
@@ -83,6 +96,7 @@ function plainReasons(result: RelationshipResult): string[] {
   if (e.flip_detected === true) reasons.push("เมื่อลองกลับภาพแนวนอนแล้ว รายละเอียดสำคัญตรงกับภาพต้นฉบับ");
   if (e.recapture_suspected === true) reasons.push("โครงสร้างภาพตรงกันเป็นบริเวณกว้าง แม้ความคมหรือลายพิกเซลเปลี่ยนจากการถ่ายผ่านอีกหน้าจอ");
   if (e.blurred_crop_suspected === true) reasons.push("ยังพบรายละเอียดชุดเดิมหลังภาพถูกทำให้เบลอหรือครอบตัด");
+  if (e.whole_image_fallback_used === true) reasons.push("โมเดลอวัยวะตรวจได้ไม่ครบ จึงยืนยันเพิ่มด้วยจุดตรงกันที่กระจายทั่วภาพ");
   if (e.body_reuse_gate === true) reasons.push("พบตำแหน่งบนร่างกายหลายส่วนตรงกันมากพอ จึงมีแนวโน้มว่านำคนจากภาพเดิมมาใช้");
   else if (e.body_reuse_suspected === true) reasons.push("พบอวัยวะบางส่วนตรงกัน แต่ควรตรวจด้วยสายตาเพิ่มเติม");
   if (typeof e.embedding_similarity === "number") reasons.push(`AI ประเมินว่าเนื้อหาโดยรวมคล้ายกัน ${(e.embedding_similarity * 100).toFixed(0)}%`);
@@ -94,12 +108,12 @@ function plainReasons(result: RelationshipResult): string[] {
 function technologyEvidence(result: RelationshipResult) {
   const e = result.evidence;
   const phashDistance = typeof e.phash_distance === "number" ? e.phash_distance : null;
-  const dino = typeof e.embedding_similarity === "number" ? e.embedding_similarity : null;
+  const sscd = typeof e.embedding_similarity === "number" ? e.embedding_similarity : null;
   const sift = typeof e.sift_good_matches === "number" ? e.sift_good_matches : 0;
   const inliers = typeof e.ransac_inliers === "number" ? e.ransac_inliers : 0;
   return [
     { name: "pHash", detail: "ลายนิ้วมือภาพโดยรวม", passed: e.exact_duplicate === true || (phashDistance !== null && phashDistance <= 10), value: phashDistance === null ? "ไม่มีค่า" : `ต่าง ${phashDistance} จาก 64 จุด`, view: "compare" as const },
-    { name: "DINOv2", detail: "AI เปรียบเทียบเนื้อหาโดยรวม", passed: dino !== null && dino >= .55, value: dino === null ? "ไม่มีค่า" : `คล้ายกัน ${(dino * 100).toFixed(0)}%`, view: "compare" as const },
+    { name: "SSCD", detail: "ลายนิ้วมือสำหรับตรวจภาพที่ถูกคัดลอกหรือดัดแปลง", passed: sscd !== null && sscd >= .65, value: sscd === null ? "ไม่มีค่า" : `คล้ายเชิงสำเนา ${(sscd * 100).toFixed(0)}%`, view: "compare" as const },
     { name: "SIFT + RANSAC", detail: "รายละเอียดและตำแหน่งที่ตรงกันจริง", passed: sift >= 12 && inliers >= 8, value: `ตรง ${sift} จุด ยืนยันตำแหน่ง ${inliers} จุด`, view: "matches" as const },
     { name: "โมเดลแยกอวัยวะ", detail: "ตรวจส่วนของคนที่อาจถูกนำมาใช้ซ้ำ", passed: e.body_reuse_gate === true || e.body_reuse_suspected === true || e.similar_person_only === true, value: e.body_reuse_gate === true ? "หลายส่วนของร่างกายตรงกัน" : e.body_reuse_suspected === true ? "พบอวัยวะบางส่วนตรงกัน" : e.similar_person_only === true ? "พบศีรษะหรือคอคล้ายกัน" : "ยังไม่เข้าเกณฑ์", view: "body" as const },
   ];

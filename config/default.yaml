@@ -12,19 +12,22 @@ database:
   url: sqlite+aiosqlite:///./data/app.db
 embedding:
   enabled: true
-  provider: dinov2
-  model: dinov2_vits14
-  version: facebookresearch/dinov2:v1
-  cache_dir: data/models/torch
+  provider: sscd
+  model: sscd_disc_mixup
+  version: facebookresearch/sscd-copy-detection:disc-mixup
+  cache_dir: data/models
+  model_path: data/models/sscd_disc_mixup.torchscript.pt
+  model_url: https://dl.fbaipublicfiles.com/sscd-copy-detection/sscd_disc_mixup.torchscript.pt
+  input_size: 320
   device: auto
   normalize: true
   batch_size: 0 # 0 = เลือกอัตโนมัติตาม CPU/VRAM
   allow_cpu_fallback: true
 vector_search:
   provider: faiss
-  index_path: data/faiss/index.bin
-  metadata_path: data/faiss/ids.json
-  top_k: 50
+  index_path: data/faiss/sscd.index.bin
+  metadata_path: data/faiss/sscd.ids.json
+  top_k: 30
 phash:
   enabled: true
   hash_size: 8
@@ -69,6 +72,18 @@ relationship:
   partial_reuse_min_inliers: 30
   partial_reuse_min_inlier_ratio: 0.20
   background_replaced_min_embedding_similarity: 0.45
+  # Strong local geometry across the segmented person can prove source reuse
+  # even when a generative edit leaves most matches on head/neck.
+  foreground_source_min_inliers: 30
+  foreground_source_min_inlier_ratio: 0.55
+  foreground_source_min_coverage: 0.08
+  # Connect suspicious check-ins only when both the location and person retain
+  # independent evidence. Background matches alone never merge groups.
+  repeated_checkin_min_foreground_inliers: 8
+  repeated_checkin_min_foreground_ratio: 0.50
+  repeated_checkin_min_foreground_coverage: 0.02
+  repeated_checkin_min_identity_inliers: 6
+  repeated_checkin_min_reuse_inliers: 4
   same_image_phash_max: 4
   same_image_min_inlier_ratio: 0.50
   recapture_min_inliers: 40
@@ -80,10 +95,16 @@ relationship:
   blurred_crop_min_inlier_ratio: 0.25
   blurred_crop_min_embedding_similarity: 0.55
   blurred_crop_max_phash_distance: 22
+  # Fallback when blur prevents reliable body-part masks. All four signals
+  # (quality, geometry count/ratio/coverage, and SSCD) must pass together.
+  blurred_whole_min_inliers: 18
+  blurred_whole_min_inlier_ratio: 0.45
+  blurred_whole_min_coverage: 0.08
+  blurred_whole_strong_inlier_ratio: 0.75
   weights:
-    phash: 0.20
-    embedding: 0.30
-    sift: 0.15
+    phash: 0.15
+    embedding: 0.45
+    sift: 0.05
     ransac: 0.35
 jobs:
   broker_url: redis://localhost:6379/0
@@ -94,7 +115,7 @@ performance:
   cpu_workers: 0 # 0 = เลือกอัตโนมัติจากจำนวนคอร์
   opencv_threads: 0 # 0 = แบ่ง thread ให้เหมาะกับจำนวน worker
   pair_chunk_size: 16
-  candidate_min_similarity: 0.20 # ค่อนข้างผ่อนเพื่อไม่ให้ภาพครอป/เบลอตกหล่น
+  candidate_min_similarity: 0.25 # SSCD candidate gate; การตัดสินจริงยังต้องผ่าน geometry
 logging:
   level: INFO
 configuration_version: "1"

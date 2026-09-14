@@ -31,7 +31,7 @@ class RelationshipScorer:
             embedding_score = max(0.0, min(1.0, evidence.embedding_similarity))
             values.append((embedding_score, weights.embedding))
             if embedding_score >= 0.80:
-                reasons.append(f"High DINOv2 similarity ({embedding_score:.3f})")
+                reasons.append(f"High SSCD copy similarity ({embedding_score:.3f})")
         if evidence.sift_reference_features:
             sift_score = min(1.0, evidence.sift_good_matches / max(12, evidence.sift_reference_features * 0.15))
             values.append((sift_score, weights.sift))
@@ -46,6 +46,8 @@ class RelationshipScorer:
             reasons.append("Horizontal mirror transformation detected")
         if evidence.body_reuse_gate:
             reasons.append("Matching features are verified across reusable body regions")
+        elif evidence.foreground_source_reuse:
+            reasons.append("Strong geometry across the segmented foreground verifies source reuse")
         elif evidence.body_reuse_suspected:
             reasons.append("One reusable body region has strong matching evidence")
         elif evidence.similar_person_only:
@@ -55,13 +57,22 @@ class RelationshipScorer:
         if evidence.scene_change_suspected:
             score = max(score, 0.72)
             reasons.append("Strong geometrically verified partial reuse")
+        elif evidence.repeated_checkin_suspected:
+            score = max(score, 0.68)
+            reasons.append("The same location and person regions recur across check-ins")
         elif evidence.recapture_suspected:
             score = max(score, 0.80)
             reasons.append("Wide geometrically consistent coverage indicates a recaptured source image")
         elif evidence.blurred_crop_suspected:
             score = max(score, 0.70)
-            reasons.append("A blurred or cropped image retains geometrically verified source regions")
-        elif evidence.similar_person_only:
+            if evidence.whole_image_fallback_used:
+                reasons.append("Body regions were incomplete, but strong whole-image geometry verifies the blurred source")
+            else:
+                reasons.append("A blurred or cropped image retains geometrically verified source regions")
+        elif evidence.same_location_suspected:
+            score = max(score, 0.67)
+            reasons.append("The background verifies that the same work location appears across submissions")
+        elif evidence.similar_person_only and not evidence.same_location_suspected:
             score = min(score, 0.64)
         if score >= self.config.very_high_threshold:
             decision = RelationshipLevel.VERY_HIGH_RELATION
@@ -74,10 +85,13 @@ class RelationshipScorer:
         else:
             decision = RelationshipLevel.UNRELATED
         strong_geometry = evidence.ransac_inliers >= self.config.partial_reuse_min_inliers and evidence.ransac_inlier_ratio >= self.config.partial_reuse_min_inlier_ratio
-        if evidence.flip_detected or evidence.recapture_suspected or evidence.blurred_crop_suspected:
+        verified_flip = evidence.flip_detected and score >= self.config.possible_threshold
+        if verified_flip or evidence.recapture_suspected or evidence.blurred_crop_suspected:
             classification = RelationClassification.EDITED_OR_CROPPED
         elif evidence.scene_change_suspected:
             classification = RelationClassification.BACKGROUND_REPLACED
+        elif evidence.repeated_checkin_suspected:
+            classification = RelationClassification.REPEATED_CHECKIN
         elif (
             evidence.phash_distance is not None
             and evidence.phash_distance <= self.config.same_image_phash_max
@@ -86,6 +100,8 @@ class RelationshipScorer:
             classification = RelationClassification.SAME_IMAGE
         elif evidence.body_reuse_gate and strong_geometry:
             classification = RelationClassification.EDITED_OR_CROPPED
+        elif evidence.same_location_suspected:
+            classification = RelationClassification.SAME_SCENE_NEW_CAPTURE
         elif evidence.similar_person_only:
             classification = RelationClassification.SIMILAR_PERSON
         elif strong_geometry:
@@ -98,7 +114,11 @@ class RelationshipScorer:
             RelationClassification.EDITED_OR_CROPPED,
         }:
             reuse_verdict = ReuseVerdict.REUSED
-        elif classification is RelationClassification.BACKGROUND_REPLACED:
+        elif classification in {
+            RelationClassification.BACKGROUND_REPLACED,
+            RelationClassification.REPEATED_CHECKIN,
+            RelationClassification.SAME_SCENE_NEW_CAPTURE,
+        }:
             reuse_verdict = ReuseVerdict.REVIEW
         else:
             reuse_verdict = ReuseVerdict.NOT_REUSED

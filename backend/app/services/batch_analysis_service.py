@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from collections.abc import Iterable
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 from functools import lru_cache
@@ -16,21 +17,22 @@ from ..core.runtime import detect_hardware
 from ..db.models import AnalysisJob, AnalysisJobItem, ImageEmbedding, ImageRecord, PairwiseResult
 from ..db.session import SessionFactory
 from ..domain.enums import JobStatus
-from ..embeddings.dinov2 import DinoV2EmbeddingProvider
+from ..embeddings.sscd import SSCDEmbeddingProvider
 from ..storage.local_storage import LocalImageStorage
 from ..vector_store.faiss_store import FaissVectorStore
 from .pair_analysis_service import PairAnalysisService
 
 
 @lru_cache
-def _components() -> tuple[DinoV2EmbeddingProvider, FaissVectorStore, PairAnalysisService]:
+def _components() -> tuple[SSCDEmbeddingProvider, FaissVectorStore, PairAnalysisService]:
     settings = get_settings()
-    provider = DinoV2EmbeddingProvider(
-        settings.embedding.model,
+    provider = SSCDEmbeddingProvider(
+        settings.embedding.model_path,
+        settings.embedding.model_url,
         settings.embedding.device,
         settings.embedding.normalize,
         settings.embedding.allow_cpu_fallback,
-        settings.embedding.cache_dir,
+        settings.embedding.input_size,
     )
     vector_store = FaissVectorStore(
         provider.dimension,
@@ -42,6 +44,11 @@ def _components() -> tuple[DinoV2EmbeddingProvider, FaissVectorStore, PairAnalys
 
 def normalize_pair(first: str, second: str) -> tuple[str, str]:
     return (first, second) if first < second else (second, first)
+
+
+def unique_records_by_id(records: Iterable[ImageRecord]) -> list[ImageRecord]:
+    """Keep one record per image when a batch contains exact duplicate files."""
+    return list({record.id: record for record in records}.values())
 
 
 async def _set_job(job_id: str, status: JobStatus, processed: int | None = None, error: str | None = None) -> None:
@@ -77,6 +84,9 @@ async def process_batch_job(job_id: str, force: bool = False) -> None:
                 )
             )
             all_records = {record.id: record for record in await session.scalars(select(ImageRecord))}
+            records_by_sha: dict[str, list[str]] = {}
+            for record in all_records.values():
+                records_by_sha.setdefault(record.sha256, []).append(record.id)
             record_paths = {
                 image_id: resolved
                 for image_id, record in all_records.items()
@@ -101,6 +111,7 @@ async def process_batch_job(job_id: str, force: bool = False) -> None:
                     vectors[record.id] = np.frombuffer(embedding_row.embedding, dtype=np.float32).copy()
 
             batch_size = profile.embedding_batch_size
+            missing = unique_records_by_id(missing)
             for offset in range(0, len(missing), batch_size):
                 records_chunk = missing[offset : offset + batch_size]
                 images: list[Image.Image] = []
@@ -142,8 +153,14 @@ async def process_batch_job(job_id: str, force: bool = False) -> None:
                     continue
                 current_bytes = current_path.read_bytes()
                 candidates = vector_store.search(vector, settings.vector_search.top_k)
+                candidate_scores = {candidate_id: similarity for candidate_id, similarity in candidates}
+                # Exact duplicates must never be lost because of top-k or an
+                # embedding threshold. They are distinct upload occurrences.
+                for duplicate_id in records_by_sha.get(current.sha256, []):
+                    if duplicate_id != current.id:
+                        candidate_scores[duplicate_id] = 1.0
                 work: list[tuple[tuple[str, str], str, float]] = []
-                for candidate_id, similarity in candidates:
+                for candidate_id, similarity in candidate_scores.items():
                     if candidate_id == current.id or similarity < settings.performance.candidate_min_similarity:
                         continue
                     pair = normalize_pair(current.id, candidate_id)
@@ -155,18 +172,6 @@ async def process_batch_job(job_id: str, force: bool = False) -> None:
                         continue
                     seen_pairs.add(pair)
                     work.append((pair, str(candidate_path), similarity))
-
-                # Run segmentation as a batch before CPU workers start. This lets
-                # Ultralytics use GPU batches and prevents duplicate model calls
-                # when several candidate pairs contain the same image.
-                if pair_service.body_parts is not None and work:
-                    mask_paths = [str(current_path), *(path for _, path, _ in work)]
-                    for offset in range(0, len(mask_paths), profile.embedding_batch_size):
-                        mask_images: list[Image.Image] = []
-                        for image_path in mask_paths[offset : offset + profile.embedding_batch_size]:
-                            with Image.open(image_path) as opened:
-                                mask_images.append(opened.convert("RGB"))
-                        pair_service.body_parts.segment_many(mask_images)
 
                 for offset in range(0, len(work), settings.performance.pair_chunk_size):
                     chunk = work[offset : offset + settings.performance.pair_chunk_size]

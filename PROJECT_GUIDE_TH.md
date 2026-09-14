@@ -24,7 +24,7 @@ SHA-256 ตรวจไฟล์ตรงกันทุกไบต์
 pHash ตรวจภาพโดยรวม/ภาพกลับด้าน
         |
         v
-DINOv2 สร้างเวกเตอร์ความหมายเป็น batch (GPU เมื่อใช้ได้)
+SSCD สร้างลายนิ้วมือสำหรับตรวจสำเนาเป็น batch (GPU เมื่อใช้ได้)
         |
         v
 FAISS เลือกเฉพาะภาพใกล้เคียง Top-K
@@ -45,7 +45,7 @@ SIFT จับรายละเอียดเฉพาะจุด + RANSAC �
 
 ไฟล์ `backend/app/core/runtime.py` ตรวจจำนวน logical CPU, ตรวจ CUDA และอ่าน VRAM ตอนเริ่มงาน:
 
-- DINOv2 ใช้ CUDA เมื่อ PyTorch มองเห็น GPU
+- SSCD ใช้ CUDA เมื่อ PyTorch มองเห็น GPU
 - Ultralytics mask ใช้ CUDA อัตโนมัติเมื่อรองรับ
 - ขนาด batch เลือกจาก VRAM: VRAM มากใช้ batch ใหญ่ขึ้น; CPU-only ใช้ batch เล็กลง
 - SIFT/RANSAC ใช้ thread pool หลาย worker และแบ่งจำนวน OpenCV threads เพื่อไม่ให้แต่ละ workerแย่ง CPU กัน
@@ -87,7 +87,7 @@ fake ckeck in/
 │  │  ├─ image_quality_detector.py วัดความเบลอ
 │  │  └─ body_part_detector.py    ใช้ organ.pt แยกและตรวจจุดบนอวัยวะ
 │  ├─ embeddings/
-│  │  └─ dinov2.py                โหลด DINOv2, เลือกอุปกรณ์ และสร้าง embedding แบบ batch
+│  │  └─ sscd.py                  โหลด SSCD, เลือกอุปกรณ์ และสร้าง embedding แบบ batch
 │  ├─ vector_store/
 │  │  └─ faiss_store.py           เก็บ/ค้นเวกเตอร์ใกล้เคียงและบันทึก index
 │  ├─ services/
@@ -108,7 +108,7 @@ fake ckeck in/
 ├─ data/images/                   ไฟล์ภาพที่ระบบจัดเก็บ
 ├─ data/app.db                    ฐานข้อมูล SQLite
 ├─ data/faiss/                    FAISS index และรายการ image id
-├─ data/models/                   DINOv2 cache และโมเดล mask
+├─ data/models/                   SSCD TorchScript และโมเดลแยกอวัยวะ
 ├─ tests/                         unit tests
 ├─ environment.yml               Conda environment แบบพกพา
 ├─ THIRD_PARTY_LICENSES.md        สรุป license ของ dependency หลัก
@@ -155,7 +155,7 @@ python -c "import torch; print(torch.cuda.is_available()); print(torch.cuda.get_
 ### 5.4 โมเดล
 
 - วางโมเดลอวัยวะที่ `data/models/human_mask/organ.pt`
-- DINOv2 จะดาวน์โหลดครั้งแรกไปที่ `data/models/torch`
+- SSCD จะดาวน์โหลดครั้งแรกไปที่ `data/models/sscd_disc_mixup.torchscript.pt`
 - หากเครื่องใหม่ไม่มีอินเทอร์เน็ต ให้คัดลอกทั้ง `data/models` จากเครื่องเดิม
 
 ### 5.5 สร้างหน้าเว็บ
@@ -218,15 +218,15 @@ python -m backend.app.main
 - `performance.cpu_workers: 0` เลือกตาม CPU; เครื่อง RAM น้อยให้ตั้ง 2–4
 - `performance.opencv_threads: 0` แบ่ง thread อัตโนมัติ
 - `performance.pair_chunk_size` จำนวนคู่ที่ส่งเข้า thread pool พร้อมกัน
-- `performance.candidate_min_similarity` ตัด candidate ที่ DINOv2 ต่ำมากก่อนใช้ SIFT
+- `performance.candidate_min_similarity` ตัด candidate ที่ SSCD ต่ำมากก่อนใช้ SIFT
 - `vector_search.top_k` จำนวนเพื่อนบ้านต่อภาพ ค่าสูงลดโอกาสตกหล่นแต่ใช้เวลามากขึ้น
 - `relationship.background_replaced_min_embedding_similarity` กันลายซ้ำหรือจุดหลอกที่ทำให้คนละภาพถูกตีความว่าเปลี่ยนฉาก
-- `relationship.blur_variance_threshold` ค่ายิ่งสูงยิ่งยอมรับภาพที่ดูเบลอมากขึ้น; ใช้ร่วมกับเรขาคณิตและ DINOv2 ไม่ได้ตัดสินเดี่ยว ๆ
+- `relationship.blur_variance_threshold` ค่ายิ่งสูงยิ่งยอมรับภาพที่ดูเบลอมากขึ้น; ใช้ร่วมกับเรขาคณิตและ SSCD ไม่ได้ตัดสินเดี่ยว ๆ
 - `relationship.blurred_crop_max_phash_distance` ระยะ pHash สูงสุดสำหรับภาพเบลอ/ครอป ซึ่งอนุโลมมากกว่าภาพปกติ
 - `sift.max_dimension` ลดค่านี้ทำให้เร็วขึ้นแต่จุดละเอียดอาจลดลง
 - `body_parts.image_size` ลดค่านี้เมื่อ VRAM น้อย
 
-สำหรับหลายพันภาพไม่ควรเปรียบเทียบทุกคู่ ระบบจึงใช้ FAISS Top-K และตัวกรอง DINOv2 ก่อนส่งเข้า detector ที่หนักกว่า
+สำหรับหลายพันภาพไม่ควรเปรียบเทียบทุกคู่ ระบบจึงใช้ FAISS Top-K และตัวกรอง SSCD ก่อนส่งเข้า detector ที่หนักกว่า
 
 ## 9. ตรวจสอบและแก้ปัญหา
 
@@ -237,7 +237,7 @@ python -m ruff check backend tests
 
 - พอร์ต 8000 ถูกใช้: มี Backend อีกตัวทำงานอยู่ ให้เปิดเว็บเดิมหรือปิดโปรเซสนั้นก่อน
 - `torch.cuda.is_available()` เป็น False: ติดตั้ง PyTorch CUDA ไม่ตรงกับ driver หรือเป็น CPU wheel
-- DINOv2 ครั้งแรกช้า: กำลังโหลด/ดาวน์โหลด model; ครั้งต่อไปใช้ cache
+- SSCD ครั้งแรกช้า: กำลังดาวน์โหลด/โหลดโมเดล TorchScript; ครั้งต่อไปใช้ไฟล์ที่ cache ไว้
 - `xFormers is not available`: เป็นคำเตือนเรื่อง optimization ไม่ทำให้ผลผิด แต่ inference อาจช้ากว่า
 - งานดูค้างที่ภาพหนึ่ง: ภาพหนึ่งอาจมี candidate หลายคู่ ความคืบหน้าปัจจุบันนับภาพที่ตรวจเสร็จ
 - CUDA out-of-memory: ลด `embedding.batch_size`, `body_parts.image_size` หรือ `performance.pair_chunk_size`

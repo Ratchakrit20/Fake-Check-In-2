@@ -53,11 +53,21 @@ class PairEvidence:
     body_reuse_suspected: bool = False
     similar_person_only: bool = False
     body_part_inliers: dict[str, int] = field(default_factory=dict)
+    foreground_ransac_inliers: int = 0
+    foreground_ransac_ratio: float = 0.0
+    foreground_coverage: float = 0.0
+    foreground_source_reuse: bool = False
+    repeated_checkin_suspected: bool = False
+    background_ransac_inliers: int = 0
+    background_ransac_ratio: float = 0.0
+    background_coverage: float = 0.0
+    same_location_suspected: bool = False
     ransac_coverage: float = 0.0
     recapture_suspected: bool = False
     blur_variance_a: float = 0.0
     blur_variance_b: float = 0.0
     blurred_crop_suspected: bool = False
+    whole_image_fallback_used: bool = False
 
 
 class RelationshipResult(BaseModel):

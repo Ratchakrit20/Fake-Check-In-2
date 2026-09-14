@@ -14,7 +14,7 @@ from ..detectors.ransac_verifier import RANSACVerifier
 from ..detectors.sha256_detector import SHA256Detector
 from ..detectors.sift_matcher import SIFTMatcher
 from ..domain.interfaces import EmbeddingProvider
-from ..domain.schemas import PairEvidence, RelationshipResult
+from ..domain.schemas import PairEvidence, RansacResult, RelationshipResult
 from .evidence_visualizer import render_body_masks, render_verified_matches
 from .relationship_scorer import RelationshipScorer
 
@@ -33,7 +33,7 @@ class PairAnalysisService:
         )
         self.ransac = RANSACVerifier(settings.ransac.reprojection_threshold)
         self.flip = FlipDetector(self.sift, self.ransac)
-        self.body_parts = BodyPartDetector(settings.body_parts, settings.sift.max_dimension) if settings.body_parts.enabled else None
+        self.body_parts = BodyPartDetector(settings.body_parts, settings.sift.max_dimension, settings.ransac.reprojection_threshold) if settings.body_parts.enabled else None
         self.scorer = RelationshipScorer(settings.relationship)
 
     def analyze_bytes(
@@ -66,14 +66,19 @@ class PairAnalysisService:
         normal_sift = self.sift.match(first, second)
         normal_ransac = self.ransac.verify(normal_sift)
         best_sift, best_ransac, transform = normal_sift, normal_ransac, "original"
-        if self.settings.flip_detection.horizontal:
+        normal_geometry_passes = (
+            normal_ransac.inlier_count >= self.settings.ransac.min_inliers
+            and normal_ransac.inlier_ratio >= self.settings.ransac.min_inlier_ratio
+        )
+        hash_suggests_flip = (
+            flip_hash_distance is not None
+            and flip_hash_distance <= self.settings.phash.max_hamming_distance
+            and flip_hash_distance + 3 <= normal_hash_distance
+        )
+        if self.settings.flip_detection.horizontal and (hash_suggests_flip or not normal_geometry_passes):
             flipped_sift = self.sift.match(first, ImageOps.mirror(second))
             flipped_ransac = self.ransac.verify(flipped_sift)
-            hash_confirms_flip = (
-                flip_hash_distance is not None
-                and flip_hash_distance <= self.settings.phash.max_hamming_distance
-                and flip_hash_distance + 3 <= normal_hash_distance
-            )
+            hash_confirms_flip = hash_suggests_flip
             geometry_confirms_flip = (
                 flipped_ransac.inlier_count >= self.settings.ransac.min_inliers
                 and flipped_ransac.inlier_ratio >= self.settings.ransac.min_inlier_ratio
@@ -87,24 +92,48 @@ class PairAnalysisService:
                 best_sift, best_ransac, transform = flipped_sift, flipped_ransac, "horizontal_flip"
         distance = flip_hash_distance if transform == "horizontal_flip" and flip_hash_distance is not None else normal_hash_distance
         body_gate, body_suspected, similar_person_only, body_part_inliers = False, False, False, {}
-        if self.body_parts is not None:
+        foreground_ransac, background_ransac = RansacResult(), RansacResult()
+        geometry_is_credible = (
+            best_sift.good_match_count >= self.settings.sift.min_good_matches
+            and best_ransac.inlier_count >= 4
+        )
+        if self.body_parts is not None and geometry_is_credible:
             verification_second = ImageOps.mirror(second) if transform == "horizontal_flip" else second
-            body_gate, body_suspected, similar_person_only, body_part_inliers = self.body_parts.verify_matches(
+            body_gate, body_suspected, similar_person_only, body_part_inliers, foreground_ransac, background_ransac = self.body_parts.verify_matches(
                 first, verification_second, best_sift, best_ransac
             )
+        foreground_verified = (
+            body_gate
+            and foreground_ransac.inlier_count >= self.settings.body_parts.min_reuse_inliers
+            and foreground_ransac.inlier_ratio >= self.settings.ransac.min_inlier_ratio
+        )
+        background_verified = (
+            background_ransac.inlier_count >= self.settings.relationship.partial_reuse_min_inliers
+            and background_ransac.inlier_ratio >= self.settings.relationship.partial_reuse_min_inlier_ratio
+            and background_ransac.min_coverage >= 0.02
+        )
+        same_location_suspected = transform == "original" and background_verified
+        foreground_source_reuse = (
+            foreground_ransac.inlier_count >= self.settings.relationship.foreground_source_min_inliers
+            and foreground_ransac.inlier_ratio >= self.settings.relationship.foreground_source_min_inlier_ratio
+            and foreground_ransac.min_coverage >= self.settings.relationship.foreground_source_min_coverage
+        )
+        identity_inliers = sum(body_part_inliers.get(label, 0) for label in self.settings.body_parts.identity_classes)
+        reuse_inliers = sum(body_part_inliers.get(label, 0) for label in self.settings.body_parts.reuse_classes)
+        repeated_checkin_suspected = (
+            transform == "original"
+            and background_verified
+            and foreground_ransac.inlier_count >= self.settings.relationship.repeated_checkin_min_foreground_inliers
+            and foreground_ransac.inlier_ratio >= self.settings.relationship.repeated_checkin_min_foreground_ratio
+            and foreground_ransac.min_coverage >= self.settings.relationship.repeated_checkin_min_foreground_coverage
+            and identity_inliers >= self.settings.relationship.repeated_checkin_min_identity_inliers
+            and reuse_inliers >= self.settings.relationship.repeated_checkin_min_reuse_inliers
+        )
         scene_change_suspected = (
             transform == "original"
-            and (body_gate or body_suspected)
-            and best_ransac.inlier_count >= self.settings.relationship.partial_reuse_min_inliers
-            and best_ransac.inlier_ratio >= self.settings.relationship.partial_reuse_min_inlier_ratio
+            and (foreground_verified or foreground_source_reuse)
+            and not background_verified
             and normal_hash_distance > self.settings.phash.max_hamming_distance
-            and (
-                body_gate
-                or (
-                    embedding_similarity is not None
-                    and embedding_similarity >= self.settings.relationship.background_replaced_min_embedding_similarity
-                )
-            )
         )
         recapture_suspected = (
             transform == "original"
@@ -115,17 +144,36 @@ class PairAnalysisService:
             and embedding_similarity >= self.settings.relationship.recapture_min_embedding_similarity
         )
         low_quality_pair = min(blur_variance_a, blur_variance_b) < self.settings.relationship.blur_variance_threshold
+        whole_image_fallback = (
+            not body_gate
+            and low_quality_pair
+            and best_ransac.inlier_count >= self.settings.relationship.blurred_whole_min_inliers
+            and best_ransac.inlier_ratio >= self.settings.relationship.blurred_whole_min_inlier_ratio
+            and best_ransac.min_coverage >= self.settings.relationship.blurred_whole_min_coverage
+            and (
+                (
+                    embedding_similarity is not None
+                    and embedding_similarity >= self.settings.relationship.blurred_crop_min_embedding_similarity
+                )
+                or best_ransac.inlier_ratio >= self.settings.relationship.blurred_whole_strong_inlier_ratio
+            )
+        )
         blurred_crop_suspected = (
             transform == "original"
             and low_quality_pair
-            and best_ransac.inlier_count >= self.settings.relationship.blurred_crop_min_inliers
-            and best_ransac.inlier_ratio >= self.settings.relationship.blurred_crop_min_inlier_ratio
-            and embedding_similarity is not None
-            and embedding_similarity >= self.settings.relationship.blurred_crop_min_embedding_similarity
             and (
-                body_gate
-                or body_suspected
-                or normal_hash_distance <= self.settings.relationship.blurred_crop_max_phash_distance
+                whole_image_fallback
+                or (
+                    best_ransac.inlier_count >= self.settings.relationship.blurred_crop_min_inliers
+                    and best_ransac.inlier_ratio >= self.settings.relationship.blurred_crop_min_inlier_ratio
+                    and embedding_similarity is not None
+                    and embedding_similarity >= self.settings.relationship.blurred_crop_min_embedding_similarity
+                    and (
+                        body_gate
+                        or body_suspected
+                        or normal_hash_distance <= self.settings.relationship.blurred_crop_max_phash_distance
+                    )
+                )
             )
         )
         evidence = PairEvidence(
@@ -146,18 +194,28 @@ class PairAnalysisService:
             body_reuse_suspected=body_suspected,
             similar_person_only=similar_person_only,
             body_part_inliers=body_part_inliers,
+            foreground_ransac_inliers=foreground_ransac.inlier_count,
+            foreground_ransac_ratio=foreground_ransac.inlier_ratio,
+            foreground_coverage=foreground_ransac.min_coverage,
+            foreground_source_reuse=foreground_source_reuse,
+            repeated_checkin_suspected=repeated_checkin_suspected,
+            background_ransac_inliers=background_ransac.inlier_count,
+            background_ransac_ratio=background_ransac.inlier_ratio,
+            background_coverage=background_ransac.min_coverage,
+            same_location_suspected=same_location_suspected,
             ransac_coverage=best_ransac.min_coverage,
             recapture_suspected=recapture_suspected,
             blur_variance_a=round(blur_variance_a, 2),
             blur_variance_b=round(blur_variance_b, 2),
             blurred_crop_suspected=blurred_crop_suspected,
+            whole_image_fallback_used=whole_image_fallback,
         )
         result = self.scorer.score(evidence)
         if include_visualizations:
-            match_image = render_verified_matches(first, verification_second if self.body_parts is not None else second, best_sift, best_ransac)
+            match_image = render_verified_matches(first, verification_second if self.body_parts is not None and geometry_is_credible else second, best_sift, best_ransac)
             if match_image:
                 result.visualizations["sift_ransac"] = match_image
-            if self.body_parts is not None:
+            if self.body_parts is not None and geometry_is_credible:
                 masks_a, masks_b = self.body_parts.segment_many([first, verification_second])
                 mask_image = render_body_masks(first, verification_second, masks_a, masks_b)
                 if mask_image:

@@ -25,6 +25,10 @@ async def upload_image(file: UploadFile = File(...), session: AsyncSession = Dep
     sha256 = SHA256Detector.from_bytes(content)
     existing = await session.scalar(select(ImageRecord).where(ImageRecord.sha256 == sha256))
     if existing:
+        storage = LocalImageStorage(settings.storage.root)
+        restored_path = storage.ensure_available(existing.id, existing.storage_path, metadata.suffix, content)
+        existing.storage_path = str(restored_path)
+        await session.commit()
         return {"id": existing.id, "status": "EXACT_DUPLICATE", "sha256": sha256}
     image_id = str(uuid4())
     storage_path = LocalImageStorage(settings.storage.root).save(image_id, metadata.suffix, content)

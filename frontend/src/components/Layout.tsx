@@ -12,9 +12,9 @@ const items = [
 export function Layout() {
   return <div className="shell">
     <aside>
-      <div className="brand"><span className="brand-mark">IR</span><div><strong>Image Relation</strong><small>INSPECTOR</small></div></div>
+      <div className="brand"><span className="brand-mark">FC</span><div><strong>Fake Check-In</strong><small>IMAGE FORENSICS</small></div></div>
       <nav>{items.map(([to, label, Icon]) => <NavLink key={to} to={to} end={to === "/"}><Icon size={19}/><span>{label}</span></NavLink>)}</nav>
-      <div className="status"><span/><div><strong>ระบบพร้อมใช้งาน</strong><small>Multi-signal analysis</small></div></div>
+      <div className="status"><span/><div><strong>ระบบพร้อมใช้งาน</strong><small>SSCD + geometry</small></div></div>
     </aside>
     <main><Outlet /></main>
   </div>;

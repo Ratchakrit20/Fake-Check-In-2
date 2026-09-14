@@ -20,7 +20,7 @@ This project prefers permissive open-source dependencies suitable for commercial
 | FAISS | Vector search | MIT |
 | PyTorch | Model inference | BSD-3-Clause |
 | torchvision | Image preprocessing | BSD-3-Clause |
-| DINOv2 code and pretrained weights | Image embeddings | Apache-2.0 |
+| SSCD code and pretrained weights | Image copy-detection descriptors | MIT |
 | Ultralytics | Body-part segmentation model runtime | AGPL-3.0 (review deployment obligations; replace with ONNX Runtime when required) |
 | Celery | Background jobs | BSD-3-Clause |
 | Redis | Queue server | RSALv2 / SSPLv1 (Redis 7 image; review distribution terms) |

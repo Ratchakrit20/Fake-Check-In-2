@@ -1,4 +1,4 @@
-from .dinov2 import DinoV2EmbeddingProvider
+from .sscd import SSCDEmbeddingProvider
 
-__all__ = ["DinoV2EmbeddingProvider"]
+__all__ = ["SSCDEmbeddingProvider"]
 

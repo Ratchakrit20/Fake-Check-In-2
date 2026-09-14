@@ -8,6 +8,7 @@ import "./batch.css";
 import "./groups.css";
 import "./reanalyze.css";
 import "./progress.css";
+import "./theme.css";
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>

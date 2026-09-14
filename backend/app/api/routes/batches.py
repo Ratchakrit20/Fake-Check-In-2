@@ -47,26 +47,30 @@ async def create_batch(
         content = await file.read()
         metadata = validator.validate(content)
         sha256 = SHA256Detector.from_bytes(content)
-        record = await session.scalar(select(ImageRecord).where(ImageRecord.sha256 == sha256))
-        if record is None:
-            image_id = str(uuid4())
-            storage_path = storage.save(image_id, metadata.suffix, content)
+        # Every upload is evidence. Keep separate records even when the bytes
+        # are identical so the relationship graph can show an exact reuse.
+        existing_exact = await session.scalar(select(ImageRecord).where(ImageRecord.sha256 == sha256).limit(1))
+        image_id = str(uuid4())
+        storage_path = storage.save(image_id, metadata.suffix, content)
+        if existing_exact is not None and existing_exact.phash:
+            phash = existing_exact.phash
+        else:
             with Image.open(io.BytesIO(content)) as opened:
                 phash = phash_detector.calculate(opened).original
-            record = ImageRecord(
-                id=image_id,
-                original_filename=Path(file.filename or "image").name,
-                storage_path=str(storage_path),
-                file_size=len(content),
-                width=metadata.width,
-                height=metadata.height,
-                mime_type=metadata.mime_type,
-                sha256=sha256,
-                phash=phash,
-                analysis_status="QUEUED",
-            )
-            session.add(record)
-            await session.flush()
+        record = ImageRecord(
+            id=image_id,
+            original_filename=Path(file.filename or "image").name,
+            storage_path=str(storage_path),
+            file_size=len(content),
+            width=metadata.width,
+            height=metadata.height,
+            mime_type=metadata.mime_type,
+            sha256=sha256,
+            phash=phash,
+            analysis_status="QUEUED",
+        )
+        session.add(record)
+        await session.flush()
         session.add(AnalysisJobItem(job_id=job.id, image_id=record.id, position=position, status="QUEUED"))
     await session.commit()
     background_tasks.add_task(run_batch_job, job.id)

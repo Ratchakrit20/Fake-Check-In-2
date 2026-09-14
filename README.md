@@ -1,6 +1,6 @@
 # Image Relation Inspector
 
-ระบบตรวจภาพซ้ำ ภาพดัดแปลง ภาพครอป/เบลอ ภาพกลับด้าน และกลุ่มภาพสัมพันธ์ด้วย SHA-256, pHash, DINOv2, FAISS, SIFT, RANSAC และโมเดลแยกอวัยวะ
+ระบบตรวจภาพซ้ำ ภาพดัดแปลง ภาพครอป/เบลอ ภาพกลับด้าน และกลุ่มภาพสัมพันธ์ด้วย SHA-256, pHash, SSCD, FAISS, SIFT, RANSAC และโมเดลแยกอวัยวะ
 
 คู่มือภาษาไทยฉบับเต็ม รวมสถาปัตยกรรม รายละเอียดทุกโมดูล การติดตั้ง GPU และการย้ายเครื่อง: [PROJECT_GUIDE_TH.md](PROJECT_GUIDE_TH.md)
 
@@ -9,7 +9,7 @@ Production-oriented MVP for explainable, multi-signal image relationship analysi
 ## Architecture
 
 ```text
-Upload -> validation -> SHA-256 -> pHash -> DINOv2 -> FAISS candidates
+Upload -> validation -> SHA-256 -> pHash -> SSCD -> FAISS candidates
                                                      -> SIFT -> RANSAC
                                                      -> score fusion -> graph groups
 ```
@@ -24,7 +24,7 @@ conda activate fake-check-in
 python -m pip install -e ".[dev]"
 ```
 
-DINOv2 downloads its Apache-2.0 model from the official `facebookresearch/dinov2` Torch Hub repository on first use. The writable cache is `data/models/torch`. Set `EMBEDDING__DEVICE=cpu`, `cuda`, or `auto`. CUDA falls back to CPU only when `allow_cpu_fallback` is enabled.
+SSCD downloads the official `sscd_disc_mixup` TorchScript model on first use and stores it at `data/models/sscd_disc_mixup.torchscript.pt`. Set `EMBEDDING__DEVICE=cpu`, `cuda`, or `auto`. CUDA falls back to CPU only when `allow_cpu_fallback` is enabled.
 
 Build the frontend once:
 
@@ -79,7 +79,7 @@ python -m ruff check backend tests
 
 ## Known limitations
 
-- The first DINOv2 request needs model download access and is slower than later requests.
+- The first SSCD request needs model download access when the cached TorchScript file is absent.
 - Manipulation localization is an extension point and is intentionally not presented as definitive AI-image detection.
 - Batch upload persistence and worker submission require the deployment-specific durable upload adapter before large production workloads.
 - The local FAISS index is single-host; use a replaceable distributed vector store for multi-worker deployments.
