@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import io
 import json
 from collections.abc import Iterable
 from concurrent.futures import ThreadPoolExecutor
@@ -9,7 +10,7 @@ from functools import lru_cache
 from pathlib import Path
 
 import numpy as np
-from PIL import Image
+from PIL import Image, ImageOps
 from sqlalchemy import select
 
 from ..core.config import get_settings
@@ -21,6 +22,12 @@ from ..embeddings.sscd import SSCDEmbeddingProvider
 from ..storage.local_storage import LocalImageStorage
 from ..vector_store.faiss_store import FaissVectorStore
 from .pair_analysis_service import PairAnalysisService
+from .source_filename import declared_source_id
+
+
+def same_declared_source(first: ImageRecord, second: ImageRecord) -> bool:
+    first_source = declared_source_id(first.original_filename)
+    return first_source is not None and first_source == declared_source_id(second.original_filename)
 
 
 @lru_cache
@@ -29,6 +36,7 @@ def _components() -> tuple[SSCDEmbeddingProvider, FaissVectorStore, PairAnalysis
     provider = SSCDEmbeddingProvider(
         settings.embedding.model_path,
         settings.embedding.model_url,
+        settings.embedding.model_sha256,
         settings.embedding.device,
         settings.embedding.normalize,
         settings.embedding.allow_cpu_fallback,
@@ -85,8 +93,12 @@ async def process_batch_job(job_id: str, force: bool = False) -> None:
             )
             all_records = {record.id: record for record in await session.scalars(select(ImageRecord))}
             records_by_sha: dict[str, list[str]] = {}
+            records_by_source: dict[str, list[str]] = {}
             for record in all_records.values():
                 records_by_sha.setdefault(record.sha256, []).append(record.id)
+                source_id = declared_source_id(record.original_filename)
+                if source_id is not None:
+                    records_by_source.setdefault(source_id, []).append(record.id)
             record_paths = {
                 image_id: resolved
                 for image_id, record in all_records.items()
@@ -135,6 +147,15 @@ async def process_batch_job(job_id: str, force: bool = False) -> None:
         vector_store.add_many([(image_id, vector) for image_id, vector in vectors.items()])
         async with SessionFactory() as session:
             existing_rows = list(await session.scalars(select(PairwiseResult)))
+            retained_rows: list[PairwiseResult] = []
+            for row in existing_rows:
+                first, second = all_records.get(row.image_a_id), all_records.get(row.image_b_id)
+                if first is not None and second is not None and same_declared_source(first, second):
+                    await session.delete(row)
+                else:
+                    retained_rows.append(row)
+            await session.commit()
+            existing_rows = retained_rows
         existing_ids = {normalize_pair(row.image_a_id, row.image_b_id): row.id for row in existing_rows}
         seen_pairs = set() if force else set(existing_ids)
         await _set_job(job_id, JobStatus.VERIFYING, 0)
@@ -152,8 +173,37 @@ async def process_batch_job(job_id: str, force: bool = False) -> None:
                 if current_path is None:
                     continue
                 current_bytes = current_path.read_bytes()
-                candidates = vector_store.search(vector, settings.vector_search.top_k)
+                source_id = declared_source_id(current.original_filename)
+                same_source_count = len(records_by_source.get(source_id, [])) if source_id is not None else 0
+                candidates = vector_store.search(vector, settings.vector_search.top_k + max(0, same_source_count - 1))
                 candidate_scores = {candidate_id: similarity for candidate_id, similarity in candidates}
+                # A 90/180/270-degree copy can rank poorly in SSCD. Cheap
+                # rotation-aware pHash retrieval keeps it from being lost
+                # before geometric verification.
+                with Image.open(io.BytesIO(current_bytes)) as opened:
+                    current_image = ImageOps.exif_transpose(opened).convert("RGB")
+                rotation_hashes = [
+                    pair_service.phash.calculate_single(current_image),
+                    pair_service.phash.calculate_single(current_image.transpose(Image.Transpose.ROTATE_270)),
+                    pair_service.phash.calculate_single(current_image.transpose(Image.Transpose.ROTATE_180)),
+                    pair_service.phash.calculate_single(current_image.transpose(Image.Transpose.ROTATE_90)),
+                ]
+                rotation_candidate_ids: set[str] = set()
+                for candidate in all_records.values():
+                    if (
+                        candidate.id == current.id
+                        or not candidate.phash
+                        or candidate.id not in vectors
+                        or same_declared_source(current, candidate)
+                    ):
+                        continue
+                    rotation_distance = min(
+                        pair_service.phash.distance(hash_value, candidate.phash)
+                        for hash_value in rotation_hashes
+                    )
+                    if rotation_distance <= settings.phash.max_hamming_distance:
+                        candidate_scores.setdefault(candidate.id, float(np.dot(vector, vectors[candidate.id])))
+                        rotation_candidate_ids.add(candidate.id)
                 # Exact duplicates must never be lost because of top-k or an
                 # embedding threshold. They are distinct upload occurrences.
                 for duplicate_id in records_by_sha.get(current.sha256, []):
@@ -161,7 +211,10 @@ async def process_batch_job(job_id: str, force: bool = False) -> None:
                         candidate_scores[duplicate_id] = 1.0
                 work: list[tuple[tuple[str, str], str, float]] = []
                 for candidate_id, similarity in candidate_scores.items():
-                    if candidate_id == current.id or similarity < settings.performance.candidate_min_similarity:
+                    if candidate_id == current.id or (
+                        similarity < settings.performance.candidate_min_similarity
+                        and candidate_id not in rotation_candidate_ids
+                    ):
                         continue
                     pair = normalize_pair(current.id, candidate_id)
                     if pair in seen_pairs:
@@ -169,6 +222,8 @@ async def process_batch_job(job_id: str, force: bool = False) -> None:
                     candidate = all_records.get(candidate_id)
                     candidate_path = record_paths.get(candidate_id)
                     if candidate is None or candidate_path is None:
+                        continue
+                    if same_declared_source(current, candidate):
                         continue
                     seen_pairs.add(pair)
                     work.append((pair, str(candidate_path), similarity))

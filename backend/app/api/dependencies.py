@@ -13,6 +13,7 @@ def pair_analysis_service() -> PairAnalysisService:
         provider = SSCDEmbeddingProvider(
             settings.embedding.model_path,
             settings.embedding.model_url,
+            settings.embedding.model_sha256,
             settings.embedding.device,
             settings.embedding.normalize,
             settings.embedding.allow_cpu_fallback,

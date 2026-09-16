@@ -44,6 +44,8 @@ class RelationshipScorer:
                 reasons.append(f"Geometrically consistent overlap ({evidence.ransac_inliers} RANSAC inliers)")
         if evidence.flip_detected:
             reasons.append("Horizontal mirror transformation detected")
+        if evidence.rotation_degrees:
+            reasons.append(f"Rotation of {evidence.rotation_degrees} degrees detected")
         if evidence.body_reuse_gate:
             reasons.append("Matching features are verified across reusable body regions")
         elif evidence.foreground_source_reuse:
@@ -85,8 +87,8 @@ class RelationshipScorer:
         else:
             decision = RelationshipLevel.UNRELATED
         strong_geometry = evidence.ransac_inliers >= self.config.partial_reuse_min_inliers and evidence.ransac_inlier_ratio >= self.config.partial_reuse_min_inlier_ratio
-        verified_flip = evidence.flip_detected and score >= self.config.possible_threshold
-        if verified_flip or evidence.recapture_suspected or evidence.blurred_crop_suspected:
+        verified_transform = (evidence.flip_detected or evidence.rotation_degrees != 0) and score >= self.config.possible_threshold
+        if verified_transform or evidence.recapture_suspected or evidence.blurred_crop_suspected:
             classification = RelationClassification.EDITED_OR_CROPPED
         elif evidence.scene_change_suspected:
             classification = RelationClassification.BACKGROUND_REPLACED

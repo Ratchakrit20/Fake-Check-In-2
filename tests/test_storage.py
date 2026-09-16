@@ -22,3 +22,11 @@ def test_ensure_available_restores_file_missing_after_migration(tmp_path):
 
     assert restored.read_bytes() == b"uploaded-again"
     assert storage.resolve(image_id, restored) == restored
+
+
+def test_resolve_never_serves_a_database_path_outside_storage(tmp_path):
+    storage = LocalImageStorage(tmp_path / "images")
+    outside = tmp_path / "secret.txt"
+    outside.write_text("secret", encoding="utf-8")
+
+    assert storage.resolve("abc", outside) is None

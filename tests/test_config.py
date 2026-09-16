@@ -14,6 +14,7 @@ def config_data():
 def test_default_config_is_valid():
     settings = Settings.model_validate(config_data())
     assert settings.embedding.provider == "sscd"
+    assert len(settings.embedding.model_sha256) == 64
     assert settings.vector_search.top_k == 30
 
 

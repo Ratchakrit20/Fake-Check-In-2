@@ -1,0 +1,12 @@
+data/
+demo_output/
+__pycache__/
+.pytest_cache/
+
+.venv/
+.env
+models/**/*.pt
+models/**/*.onnx
+
+data/images
+data/app.db

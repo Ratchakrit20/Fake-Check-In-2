@@ -1,6 +1,6 @@
 # Image Relation Inspector
 
-ระบบตรวจภาพซ้ำ ภาพดัดแปลง ภาพครอป/เบลอ ภาพกลับด้าน และกลุ่มภาพสัมพันธ์ด้วย SHA-256, pHash, SSCD, FAISS, SIFT, RANSAC และโมเดลแยกอวัยวะ
+ระบบตรวจภาพซ้ำ ภาพดัดแปลง ภาพครอป/เบลอ ภาพกลับด้าน ภาพหมุน 90/180/270 องศา และกลุ่มภาพสัมพันธ์ด้วย SHA-256, pHash, SSCD, FAISS, SIFT, RANSAC และโมเดลแยกอวัยวะ
 
 คู่มือภาษาไทยฉบับเต็ม รวมสถาปัตยกรรม รายละเอียดทุกโมดูล การติดตั้ง GPU และการย้ายเครื่อง: [PROJECT_GUIDE_TH.md](PROJECT_GUIDE_TH.md)
 
@@ -9,12 +9,16 @@ Production-oriented MVP for explainable, multi-signal image relationship analysi
 ## Architecture
 
 ```text
-Upload -> validation -> SHA-256 -> pHash -> SSCD -> FAISS candidates
-                                                     -> SIFT -> RANSAC
-                                                     -> score fusion -> graph groups
+Upload -> validation -> SHA-256 -> rotation/flip-aware pHash
+                                    -> SSCD + FAISS candidates
+                                    -> SIFT + RANSAC verification
+                                    -> score fusion -> relationship subgroups
+                                    -> source-number presentation groups
 ```
 
 FastAPI owns the HTTP interface, SQLAlchemy persists metadata and evidence, and React supplies the operator interface. Local mode runs batch jobs in a background thread without requiring Redis. Celery/Redis is an optional production extension. Algorithms are isolated behind focused components and replaceable interfaces. Existing fingerprints and embeddings are retained so new images can be processed incrementally.
+
+For filenames containing `home_<10 digits>` or `splitter_<10 digits>`, pairs carrying the same source number are skipped before expensive SIFT verification. The Groups page uses that number only as an outer presentation group and preserves detected graph components as subgroups; it does not create artificial image relationships.
 
 ## Environment
 
@@ -61,10 +65,13 @@ The single source of truth is `config/default.yaml`. Environment overrides use `
 - `GET /api/v1/dashboard`
 - `POST /api/v1/images`
 - `GET /api/v1/images/{id}`
+- `GET /api/v1/images/{id}/content`
 - `POST /api/v1/compare`
 - `POST /api/v1/batches`
 - `GET /api/v1/jobs/{id}`
 - `GET /api/v1/groups`
+
+React routes use an SPA fallback, so refreshing `/compare`, `/batch`, or `/groups` keeps the current page instead of returning an API 404.
 
 ## Tests
 
@@ -84,5 +91,6 @@ python -m ruff check backend tests
 - Batch upload persistence and worker submission require the deployment-specific durable upload adapter before large production workloads.
 - The local FAISS index is single-host; use a replaceable distributed vector store for multi-worker deployments.
 - Thresholds require calibration with representative organizational evidence images before enforcement decisions.
+- Rotation-aware pHash candidate recovery may inspect stored hashes beyond FAISS Top-K; SIFT/RANSAC still verifies every accepted relationship.
 
 See `THIRD_PARTY_LICENSES.md` before enterprise deployment.

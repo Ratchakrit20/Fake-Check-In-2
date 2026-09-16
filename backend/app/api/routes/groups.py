@@ -6,6 +6,7 @@ from ...core.config import get_settings
 from ...db.models import ImageRecord, PairwiseResult
 from ...db.session import get_session
 from ...services.relationship_graph_service import RelationshipGraphService
+from ...services.source_filename import declared_source_id
 
 router = APIRouter(prefix="/groups", tags=["groups"])
 
@@ -35,11 +36,11 @@ async def groups(session: AsyncSession = Depends(get_session)) -> dict:
     edges = RelationshipGraphService.qualified_edges(scored_edges, settings.relationship.graph_edge_threshold)
     components = RelationshipGraphService.connected_components(node_rows, edges)
     image_map = {record.id: record for record in image_records}
-    response_groups = []
+    relationship_groups = []
     for index, component in enumerate(group for group in components if len(group) > 1):
         component_ids = set(component)
         relationships = [pair for pair in related_pairs if pair.image_a_id in component_ids and pair.image_b_id in component_ids]
-        response_groups.append(
+        relationship_groups.append(
             {
                 "id": index + 1,
                 "image_ids": component,
@@ -63,6 +64,54 @@ async def groups(session: AsyncSession = Depends(get_session)) -> dict:
                     }
                     for pair in relationships
                 ],
+            }
+        )
+    subgroup_indexes_by_source: dict[str, list[int]] = {}
+    for subgroup_index, subgroup in enumerate(relationship_groups):
+        source_ids = {
+            source_id
+            for image in subgroup["images"]
+            if (source_id := declared_source_id(image["filename"])) is not None
+        }
+        subgroup["source_ids"] = sorted(source_ids)
+        for source_id in source_ids:
+            subgroup_indexes_by_source.setdefault(source_id, []).append(subgroup_index)
+
+    # Components remain the actual detected relationships. This extra layer
+    # only collects components carrying the same declared work/source number.
+    subgroup_edges = [
+        (indexes[0], subgroup_index)
+        for indexes in subgroup_indexes_by_source.values()
+        for subgroup_index in indexes[1:]
+    ]
+    outer_components = RelationshipGraphService.connected_components(
+        list(range(len(relationship_groups))),
+        subgroup_edges,
+    )
+    response_groups = []
+    for outer_index, subgroup_indexes in enumerate(outer_components, start=1):
+        subgroups = [relationship_groups[index] for index in subgroup_indexes]
+        images_by_id = {
+            image["id"]: image
+            for subgroup in subgroups
+            for image in subgroup["images"]
+        }
+        source_ids = sorted(
+            {
+                source_id
+                for subgroup in subgroups
+                for source_id in subgroup["source_ids"]
+            }
+        )
+        response_groups.append(
+            {
+                "id": outer_index,
+                "source_ids": source_ids,
+                "size": len(images_by_id),
+                "relationship_count": sum(
+                    len(subgroup["relationships"]) for subgroup in subgroups
+                ),
+                "subgroups": subgroups,
             }
         )
     return {"groups": response_groups}

@@ -1,6 +1,7 @@
 import { Image as ImageIcon, LoaderCircle, ScanSearch, X } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
-import { compareImages, RelationshipResult } from "../api/client";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useSearchParams } from "react-router-dom";
+import { compareImages, getStoredImageFile, RelationshipResult } from "../api/client";
 import { FileDrop } from "../components/FileDrop";
 
 const evidenceLabels: Record<string, string> = {
@@ -8,6 +9,7 @@ const evidenceLabels: Record<string, string> = {
   phash_distance: "ความต่างของภาพโดยรวม",
   phash_normal_distance: "ความต่างเมื่อวางภาพปกติ",
   phash_flip_distance: "ความต่างเมื่อลองกลับภาพ",
+  phash_rotation_distances: "ความต่างเมื่อลองหมุนภาพ",
   phash_max_distance: "ค่าความต่างสูงสุด",
   embedding_similarity: "ความคล้ายเชิงสำเนาจาก SSCD",
   sift_good_matches: "จุดภาพที่ตรงกัน",
@@ -15,6 +17,7 @@ const evidenceLabels: Record<string, string> = {
   ransac_inliers: "จุดที่ยืนยันตำแหน่งได้",
   ransac_inlier_ratio: "สัดส่วนพื้นที่ที่สอดคล้อง",
   flip_detected: "ตรวจพบการกลับภาพ",
+  rotation_degrees: "องศาที่หมุนเพื่อจัดแนวภาพ",
   detected_transform: "รูปแบบการเปลี่ยนแปลง",
   scene_change_suspected: "อาจมีการเปลี่ยนฉาก",
   body_reuse_gate: "อวัยวะหลักยืนยันการใช้ภาพซ้ำ",
@@ -45,6 +48,9 @@ function thaiConclusion(result: RelationshipResult): { title: string; detail: st
   }
   if (evidence.flip_detected === true || evidence.detected_transform === "horizontal_flip") {
     return { title: "ภาพเดิมถูกกลับด้าน", detail: "พบจุดสำคัญชุดเดียวกันหลังกลับภาพในแนวนอน" };
+  }
+  if (typeof evidence.rotation_degrees === "number" && evidence.rotation_degrees !== 0) {
+    return { title: `ภาพเดิมถูกหมุน ${evidence.rotation_degrees}°`, detail: "พบจุดสำคัญชุดเดียวกันหลังหมุนภาพกลับมาจัดแนว" };
   }
   if (evidence.recapture_suspected === true) {
     return { title: "เข้าข่ายถ่ายภาพเดิมซ้ำผ่านหน้าจอหรืออุปกรณ์อีกเครื่อง", detail: "แม้สี ความคม และลายพิกเซลเปลี่ยนไป แต่โครงสร้างของภาพเดิมตรงกันเป็นบริเวณกว้าง" };
@@ -84,6 +90,12 @@ function displayValue(key: string, value: unknown): string {
     const labels: Record<string, string> = { foot: "เท้า", hand: "มือ", head: "ศีรษะ", larm: "แขนท่อนล่าง", lleg: "ขาท่อนล่าง", neck: "คอ", torso: "ลำตัว", uarm: "แขนท่อนบน", uleg: "ขาท่อนบน" };
     return Object.entries(value as Record<string, number>).map(([name, count]) => `${labels[name] ?? name} ${count}`).join(", ") || "ไม่พบ";
   }
+  if (key === "phash_rotation_distances" && typeof value === "object" && value !== null) {
+    const labels: Record<string, string> = { rotate_90: "90°", rotate_180: "180°", rotate_270: "270°" };
+    return Object.entries(value as Record<string, number>)
+      .map(([name, distance]) => `${labels[name] ?? name}: ${distance}`)
+      .join(", ");
+  }
   if (typeof value === "boolean") return value ? "ใช่" : "ไม่ใช่";
   if (key.includes("similarity") || key.includes("ratio")) return `${(Number(value) * 100).toFixed(1)}%`;
   return String(value).replace("horizontal_flip", "กลับด้านแนวนอน").replace("original", "ภาพปกติ");
@@ -94,6 +106,7 @@ function plainReasons(result: RelationshipResult): string[] {
   const reasons: string[] = [];
   if (e.exact_duplicate === true) reasons.push("ข้อมูลภายในไฟล์ตรงกันทั้งหมด จึงยืนยันได้ว่าเป็นไฟล์เดียวกัน");
   if (e.flip_detected === true) reasons.push("เมื่อลองกลับภาพแนวนอนแล้ว รายละเอียดสำคัญตรงกับภาพต้นฉบับ");
+  if (typeof e.rotation_degrees === "number" && e.rotation_degrees !== 0) reasons.push(`เมื่อหมุนภาพกลับ ${e.rotation_degrees}° แล้ว รายละเอียดสำคัญและตำแหน่งตรงกับภาพต้นฉบับ`);
   if (e.recapture_suspected === true) reasons.push("โครงสร้างภาพตรงกันเป็นบริเวณกว้าง แม้ความคมหรือลายพิกเซลเปลี่ยนจากการถ่ายผ่านอีกหน้าจอ");
   if (e.blurred_crop_suspected === true) reasons.push("ยังพบรายละเอียดชุดเดิมหลังภาพถูกทำให้เบลอหรือครอบตัด");
   if (e.whole_image_fallback_used === true) reasons.push("โมเดลอวัยวะตรวจได้ไม่ครบ จึงยืนยันเพิ่มด้วยจุดตรงกันที่กระจายทั่วภาพ");
@@ -120,6 +133,9 @@ function technologyEvidence(result: RelationshipResult) {
 }
 
 export function Compare() {
+  const [searchParams] = useSearchParams();
+  const imageAId = searchParams.get("imageA"), imageBId = searchParams.get("imageB");
+  const loadedPair = useRef("");
   const [first, setFirst] = useState<File | null>(null), [second, setSecond] = useState<File | null>(null);
   const [result, setResult] = useState<RelationshipResult | null>(null), [error, setError] = useState(""), [loading, setLoading] = useState(false);
   const [preview, setPreview] = useState<"a" | "b" | "compare" | "matches" | "body" | null>(null);
@@ -127,6 +143,24 @@ export function Compare() {
   const secondUrl = useMemo(() => second ? URL.createObjectURL(second) : "", [second]);
   useEffect(() => () => { if (firstUrl) URL.revokeObjectURL(firstUrl); }, [firstUrl]);
   useEffect(() => () => { if (secondUrl) URL.revokeObjectURL(secondUrl); }, [secondUrl]);
+  useEffect(() => {
+    if (!imageAId || !imageBId) return;
+    const pairKey = `${imageAId}:${imageBId}`;
+    if (loadedPair.current === pairKey) return;
+    loadedPair.current = pairKey;
+    let active = true;
+    setLoading(true); setError(""); setResult(null);
+    void Promise.all([getStoredImageFile(imageAId), getStoredImageFile(imageBId)])
+      .then(async ([storedFirst, storedSecond]) => {
+        if (!active) return;
+        setFirst(storedFirst); setSecond(storedSecond);
+        const comparison = await compareImages(storedFirst, storedSecond);
+        if (active) setResult(comparison);
+      })
+      .catch(reason => { if (active) setError(reason instanceof Error ? reason.message : "โหลดคู่ภาพไม่สำเร็จ"); })
+      .finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
+  }, [imageAId, imageBId]);
   async function run() {
     if (!first || !second) return;
     setLoading(true); setError(""); setResult(null);

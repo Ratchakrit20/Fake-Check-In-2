@@ -22,6 +22,20 @@ export async function compareImages(first: File, second: File): Promise<Relation
   return response.json();
 }
 
+export async function getStoredImageFile(imageId: string): Promise<File> {
+  const safeId = encodeURIComponent(imageId);
+  const [detailResponse, contentResponse] = await Promise.all([
+    fetch(`${API}/images/${safeId}`),
+    fetch(`${API}/images/${safeId}/content`),
+  ]);
+  if (!detailResponse.ok || !contentResponse.ok) throw new Error("โหลดภาพจากคลังไม่สำเร็จ");
+  const detail = await detailResponse.json() as { original_filename?: string; mime_type?: string };
+  const blob = await contentResponse.blob();
+  return new File([blob], detail.original_filename || `${imageId}.img`, {
+    type: detail.mime_type || blob.type || "application/octet-stream",
+  });
+}
+
 export async function getDashboard() {
   const response = await fetch(`${API}/dashboard`);
   if (!response.ok) throw new Error("โหลดข้อมูลสรุปไม่สำเร็จ");
@@ -62,12 +76,21 @@ export async function getActiveJob(): Promise<BatchJob | null> {
   return response.json();
 }
 
-export type ImageGroup = {
+export type RelationshipSubgroup = {
   id: number;
+  source_ids: string[];
   image_ids: string[];
   size: number;
   images: Array<{ id: string; filename: string; width: number; height: number; url: string }>;
   relationships: Array<{ image_a_id: string; image_b_id: string; score: number; classification: string }>;
+};
+
+export type ImageGroup = {
+  id: number;
+  source_ids: string[];
+  size: number;
+  relationship_count: number;
+  subgroups: RelationshipSubgroup[];
 };
 
 export async function getGroups(): Promise<{ groups: ImageGroup[] }> {

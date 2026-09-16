@@ -19,9 +19,9 @@ class LocalImageStorage(ImageStorage):
 
     def resolve(self, image_id: str, stored_path: str | Path) -> Path | None:
         """Resolve old absolute paths after the project data folder is moved."""
-        original = Path(stored_path)
-        if original.is_file():
-            return original.resolve()
+        original = Path(stored_path).resolve()
+        if original.is_file() and self.root in original.parents and original.stem == image_id:
+            return original
         folder = (self.root / image_id[:2]).resolve()
         if self.root not in folder.parents:
             return None

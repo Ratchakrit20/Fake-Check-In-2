@@ -25,3 +25,26 @@ def test_mirrored_recompressed_image_is_detected():
 
     assert result.evidence["flip_detected"] is True
     assert result.reuse_verdict.value == "reused"
+
+
+def test_rotated_recompressed_images_are_detected():
+    rng = np.random.default_rng(84)
+    image = Image.fromarray(rng.integers(0, 256, (360, 240, 3), dtype=np.uint8))
+    draw = ImageDraw.Draw(image)
+    draw.rectangle((18, 35, 90, 165), fill="orange")
+    draw.ellipse((135, 195, 225, 315), fill="green")
+    settings = get_settings().model_copy(deep=True)
+    settings.body_parts.enabled = False
+
+    rotations = (
+        Image.Transpose.ROTATE_270,
+        Image.Transpose.ROTATE_180,
+        Image.Transpose.ROTATE_90,
+    )
+    for rotation in rotations:
+        rotated = image.transpose(rotation)
+        result = PairAnalysisService(settings).analyze_bytes(_jpeg(image, 92), _jpeg(rotated, 76))
+
+        assert result.evidence["rotation_degrees"] in {90, 180, 270}
+        assert result.evidence["ransac_inliers"] >= settings.ransac.min_inliers
+        assert result.reuse_verdict.value == "reused"

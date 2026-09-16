@@ -5,6 +5,7 @@ app:
   max_upload_files: 1000
   max_file_size_mb: 20
   max_image_pixels: 80000000
+  max_request_size_mb: 512
   allowed_mime_types: [image/jpeg, image/png, image/webp, image/tiff, image/bmp]
 storage:
   root: data/images
@@ -18,6 +19,7 @@ embedding:
   cache_dir: data/models
   model_path: data/models/sscd_disc_mixup.torchscript.pt
   model_url: https://dl.fbaipublicfiles.com/sscd-copy-detection/sscd_disc_mixup.torchscript.pt
+  model_sha256: 9f26bd4c848cc19b73d2ae92eea6e04886f61a7b764ceb7a13aeee62e6a6db56
   input_size: 320
   device: auto
   normalize: true

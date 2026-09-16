@@ -17,9 +17,12 @@ class PerceptualHashDetector:
 
     def calculate(self, image: Image.Image) -> PerceptualHashResult:
         rgb = image.convert("RGB")
-        original = str(imagehash.phash(rgb, hash_size=self.hash_size))
-        flipped = str(imagehash.phash(ImageOps.mirror(rgb), hash_size=self.hash_size)) if self.compare_horizontal_flip else None
+        original = self.calculate_single(rgb)
+        flipped = self.calculate_single(ImageOps.mirror(rgb)) if self.compare_horizontal_flip else None
         return PerceptualHashResult(original, flipped)
+
+    def calculate_single(self, image: Image.Image) -> str:
+        return str(imagehash.phash(image.convert("RGB"), hash_size=self.hash_size))
 
     @staticmethod
     def distance(first: str, second: str) -> int:

@@ -47,22 +47,25 @@ class PairAnalysisService:
         if exact:
             return self.scorer.score(PairEvidence(exact_duplicate=True))
         with Image.open(io.BytesIO(first_content)) as opened_a, Image.open(io.BytesIO(second_content)) as opened_b:
-            first, second = opened_a.convert("RGB"), opened_b.convert("RGB")
+            first = ImageOps.exif_transpose(opened_a).convert("RGB")
+            second = ImageOps.exif_transpose(opened_b).convert("RGB")
         hash_a, hash_b = self.phash.calculate(first), self.phash.calculate(second)
         blur_variance_a = ImageQualityDetector.blur_variance(first)
         blur_variance_b = ImageQualityDetector.blur_variance(second)
         normal_hash_distance = self.phash.distance(hash_a.original, hash_b.original)
-        flip_hash_distance = (
-            self.phash.distance(hash_a.original, hash_b.horizontal_flip) if hash_b.horizontal_flip is not None else None
-        )
-        embedding_similarity = embedding_similarity_override
-        if embedding_similarity is None and self.embedding_provider is not None:
-            embed_many = getattr(self.embedding_provider, "embed_many", None)
-            if embed_many is not None:
-                vector_a, vector_b = embed_many([first, second])
-            else:
-                vector_a, vector_b = self.embedding_provider.embed(first), self.embedding_provider.embed(second)
-            embedding_similarity = float(np.dot(vector_a, vector_b) / max(np.linalg.norm(vector_a) * np.linalg.norm(vector_b), 1e-12))
+        transformed_images = {
+            "original": second,
+            "rotate_90": second.transpose(Image.Transpose.ROTATE_270),
+            "rotate_180": second.transpose(Image.Transpose.ROTATE_180),
+            "rotate_270": second.transpose(Image.Transpose.ROTATE_90),
+        }
+        if self.settings.flip_detection.horizontal:
+            transformed_images["horizontal_flip"] = ImageOps.mirror(second)
+        transform_distances = {
+            name: self.phash.distance(hash_a.original, self.phash.calculate_single(image))
+            for name, image in transformed_images.items()
+        }
+        flip_hash_distance = transform_distances.get("horizontal_flip")
         normal_sift = self.sift.match(first, second)
         normal_ransac = self.ransac.verify(normal_sift)
         best_sift, best_ransac, transform = normal_sift, normal_ransac, "original"
@@ -70,27 +73,41 @@ class PairAnalysisService:
             normal_ransac.inlier_count >= self.settings.ransac.min_inliers
             and normal_ransac.inlier_ratio >= self.settings.ransac.min_inlier_ratio
         )
-        hash_suggests_flip = (
-            flip_hash_distance is not None
-            and flip_hash_distance <= self.settings.phash.max_hamming_distance
-            and flip_hash_distance + 3 <= normal_hash_distance
+        alternatives = sorted(
+            ((distance, name) for name, distance in transform_distances.items() if name != "original"),
+            key=lambda item: item[0],
         )
-        if self.settings.flip_detection.horizontal and (hash_suggests_flip or not normal_geometry_passes):
-            flipped_sift = self.sift.match(first, ImageOps.mirror(second))
-            flipped_ransac = self.ransac.verify(flipped_sift)
-            hash_confirms_flip = hash_suggests_flip
-            geometry_confirms_flip = (
-                flipped_ransac.inlier_count >= self.settings.ransac.min_inliers
-                and flipped_ransac.inlier_ratio >= self.settings.ransac.min_inlier_ratio
-                and flipped_ransac.inlier_ratio >= normal_ransac.inlier_ratio + 0.10
+        if alternatives:
+            candidate_distance, candidate_transform = alternatives[0]
+            hash_suggests_transform = (
+                candidate_distance <= self.settings.phash.max_hamming_distance
+                and candidate_distance + 3 <= normal_hash_distance
             )
-            absolute_flip_geometry = (
-                flipped_ransac.inlier_count >= self.settings.ransac.min_inliers
-                and flipped_ransac.inlier_ratio >= self.settings.ransac.min_inlier_ratio
-            )
-            if geometry_confirms_flip or (hash_confirms_flip and absolute_flip_geometry):
-                best_sift, best_ransac, transform = flipped_sift, flipped_ransac, "horizontal_flip"
-        distance = flip_hash_distance if transform == "horizontal_flip" and flip_hash_distance is not None else normal_hash_distance
+            if hash_suggests_transform or not normal_geometry_passes:
+                candidate_sift = self.sift.match(first, transformed_images[candidate_transform])
+                candidate_ransac = self.ransac.verify(candidate_sift)
+                absolute_geometry = (
+                    candidate_ransac.inlier_count >= self.settings.ransac.min_inliers
+                    and candidate_ransac.inlier_ratio >= self.settings.ransac.min_inlier_ratio
+                )
+                geometry_improves = (
+                    not normal_geometry_passes
+                    or candidate_ransac.inlier_ratio >= normal_ransac.inlier_ratio + 0.10
+                )
+                if absolute_geometry and (hash_suggests_transform or geometry_improves):
+                    best_sift, best_ransac, transform = candidate_sift, candidate_ransac, candidate_transform
+        distance = transform_distances[transform]
+        verification_second = transformed_images[transform]
+        rotation_degrees = {"rotate_90": 90, "rotate_180": 180, "rotate_270": 270}.get(transform, 0)
+        embedding_similarity = embedding_similarity_override
+        if (embedding_similarity is None or rotation_degrees) and self.embedding_provider is not None:
+            embed_many = getattr(self.embedding_provider, "embed_many", None)
+            if embed_many is not None:
+                vector_a, vector_b = embed_many([first, verification_second])
+            else:
+                vector_a = self.embedding_provider.embed(first)
+                vector_b = self.embedding_provider.embed(verification_second)
+            embedding_similarity = float(np.dot(vector_a, vector_b) / max(np.linalg.norm(vector_a) * np.linalg.norm(vector_b), 1e-12))
         body_gate, body_suspected, similar_person_only, body_part_inliers = False, False, False, {}
         foreground_ransac, background_ransac = RansacResult(), RansacResult()
         geometry_is_credible = (
@@ -98,7 +115,6 @@ class PairAnalysisService:
             and best_ransac.inlier_count >= 4
         )
         if self.body_parts is not None and geometry_is_credible:
-            verification_second = ImageOps.mirror(second) if transform == "horizontal_flip" else second
             body_gate, body_suspected, similar_person_only, body_part_inliers, foreground_ransac, background_ransac = self.body_parts.verify_matches(
                 first, verification_second, best_sift, best_ransac
             )
@@ -181,6 +197,9 @@ class PairAnalysisService:
             phash_distance=distance,
             phash_normal_distance=normal_hash_distance,
             phash_flip_distance=flip_hash_distance,
+            phash_rotation_distances={
+                name: transform_distances[name] for name in ("rotate_90", "rotate_180", "rotate_270")
+            },
             phash_max_distance=self.settings.phash.hash_size ** 2,
             embedding_similarity=embedding_similarity,
             sift_good_matches=best_sift.good_match_count,
@@ -188,6 +207,7 @@ class PairAnalysisService:
             ransac_inliers=best_ransac.inlier_count,
             ransac_inlier_ratio=best_ransac.inlier_ratio,
             flip_detected=transform == "horizontal_flip",
+            rotation_degrees=rotation_degrees,
             detected_transform=transform,
             scene_change_suspected=scene_change_suspected,
             body_reuse_gate=body_gate,
@@ -212,7 +232,12 @@ class PairAnalysisService:
         )
         result = self.scorer.score(evidence)
         if include_visualizations:
-            match_image = render_verified_matches(first, verification_second if self.body_parts is not None and geometry_is_credible else second, best_sift, best_ransac)
+            match_image = render_verified_matches(
+                first,
+                verification_second,
+                best_sift,
+                best_ransac,
+            )
             if match_image:
                 result.visualizations["sift_ransac"] = match_image
             if self.body_parts is not None and geometry_is_credible:

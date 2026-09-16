@@ -40,6 +40,7 @@ class PairEvidence:
     phash_distance: int | None = None
     phash_normal_distance: int | None = None
     phash_flip_distance: int | None = None
+    phash_rotation_distances: dict[str, int] = field(default_factory=dict)
     phash_max_distance: int = 64
     embedding_similarity: float | None = None
     sift_good_matches: int = 0
@@ -47,6 +48,7 @@ class PairEvidence:
     ransac_inliers: int = 0
     ransac_inlier_ratio: float = 0.0
     flip_detected: bool = False
+    rotation_degrees: int = 0
     detected_transform: str = "original"
     scene_change_suspected: bool = False
     body_reuse_gate: bool = False

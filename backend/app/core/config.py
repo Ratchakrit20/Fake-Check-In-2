@@ -19,6 +19,7 @@ class AppConfig(BaseModel):
     max_upload_files: int = Field(gt=0)
     max_file_size_mb: int = Field(gt=0)
     max_image_pixels: int = Field(gt=0)
+    max_request_size_mb: int = Field(gt=0)
     allowed_mime_types: list[str]
 
 
@@ -38,6 +39,7 @@ class EmbeddingConfig(BaseModel):
     cache_dir: Path
     model_path: Path
     model_url: str
+    model_sha256: str = Field(pattern=r"^[0-9a-fA-F]{64}$")
     input_size: int = Field(ge=224, le=1024)
     device: Literal["cpu", "cuda", "mps", "auto"] = "auto"
     normalize: bool = True

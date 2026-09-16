@@ -9,6 +9,7 @@ import {
 import { useEffect, useRef, useState } from "react";
 import {
   BatchJob,
+  ImageGroup,
   createBatch,
   getActiveJob,
   getGroups,
@@ -28,9 +29,7 @@ const stageNames: Record<string, string> = {
 export function Batch() {
   const [files, setFiles] = useState<File[]>([]),
     [job, setJob] = useState<BatchJob | null>(null);
-  const [groups, setGroups] = useState<
-    Array<{ id: number; image_ids: string[]; size: number }>
-  >([]);
+  const [groups, setGroups] = useState<ImageGroup[]>([]);
   const [error, setError] = useState(""),
     [uploading, setUploading] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null),

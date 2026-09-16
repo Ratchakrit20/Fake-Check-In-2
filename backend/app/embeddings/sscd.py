@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import urllib.request
 from pathlib import Path
 from threading import Lock
@@ -20,6 +21,7 @@ class SSCDEmbeddingProvider(EmbeddingProvider):
         self,
         model_path: Path,
         model_url: str,
+        model_sha256: str,
         device: str = "auto",
         normalize: bool = True,
         allow_cpu_fallback: bool = True,
@@ -27,6 +29,7 @@ class SSCDEmbeddingProvider(EmbeddingProvider):
     ) -> None:
         self.model_path = model_path
         self.model_url = model_url
+        self.model_sha256 = model_sha256.lower()
         self.requested_device = device
         self.normalize = normalize
         self.allow_cpu_fallback = allow_cpu_fallback
@@ -42,18 +45,29 @@ class SSCDEmbeddingProvider(EmbeddingProvider):
 
     def _download_model(self) -> None:
         target = self.model_path.resolve()
-        if target.is_file():
+        if target.is_file() and self._valid_checksum(target):
             return
+        if target.is_file():
+            raise EmbeddingError(f"SSCD model checksum mismatch: {target}")
         target.parent.mkdir(parents=True, exist_ok=True)
         partial = target.with_suffix(target.suffix + ".part")
         try:
             urllib.request.urlretrieve(self.model_url, partial)
+            if not self._valid_checksum(partial):
+                raise EmbeddingError("downloaded SSCD model checksum mismatch")
             partial.replace(target)
         except Exception as exc:
             partial.unlink(missing_ok=True)
             raise EmbeddingError(
                 f"SSCD model is missing and could not be downloaded to {target}: {exc}"
             ) from exc
+
+    def _valid_checksum(self, path: Path) -> bool:
+        digest = hashlib.sha256()
+        with path.open("rb") as stream:
+            for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                digest.update(chunk)
+        return digest.hexdigest() == self.model_sha256
 
     def _load(self) -> None:
         if self._model is not None:
