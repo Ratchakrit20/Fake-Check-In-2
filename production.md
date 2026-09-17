@@ -6,7 +6,7 @@
 
 หน้า React ทำหน้าที่รับไฟล์ แสดงสถานะ และแสดงผลเท่านั้น การวิเคราะห์ไม่ได้ทำใน browser
 
-ปัจจุบัน `POST /api/v1/batches` เรียก `run_batch_job` ผ่าน FastAPI `BackgroundTasks` ดังนั้นงาน SSCD, FAISS, SIFT, RANSAC และโมเดลอวัยวะยังทำงานในเครื่องและโปรเซสเดียวกับ API แม้โปรเจกต์จะมี Celery worker และ Redis แล้วก็ตาม Celery ปัจจุบันมีเพียง health-check และยังไม่ได้รับงานวิเคราะห์จริง
+ปัจจุบัน `POST /api/v1/batches` เรียก `run_batch_job` ผ่าน FastAPI `BackgroundTasks` ดังนั้นงาน SSCD, FAISS, SIFT, RANSAC, YOLO26 และโมเดลอวัยวะยังทำงานในเครื่องและโปรเซสเดียวกับ API แม้โปรเจกต์จะมี Celery worker และ Redis แล้วก็ตาม Celery ปัจจุบันมีเพียง health-check และยังไม่ได้รับงานวิเคราะห์จริง
 
 โครงสร้างปัจจุบันเหมาะกับการพัฒนาและใช้งานในเครื่องเดียว แต่ยังไม่ควรนำ API และ AI ไปแยก VM จนกว่าจะเชื่อม batch job เข้าคิวงานแบบถาวร
 

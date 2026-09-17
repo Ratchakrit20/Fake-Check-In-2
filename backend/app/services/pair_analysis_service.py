@@ -10,12 +10,13 @@ from ..detectors.body_part_detector import BodyPartDetector
 from ..detectors.flip_detector import FlipDetector
 from ..detectors.image_quality_detector import ImageQualityDetector
 from ..detectors.perceptual_hash_detector import PerceptualHashDetector
+from ..detectors.person_segmentation_detector import PersonSegmentationDetector
 from ..detectors.ransac_verifier import RANSACVerifier
 from ..detectors.sha256_detector import SHA256Detector
 from ..detectors.sift_matcher import SIFTMatcher
 from ..domain.interfaces import EmbeddingProvider
 from ..domain.schemas import PairEvidence, RansacResult, RelationshipResult
-from .evidence_visualizer import render_body_masks, render_verified_matches
+from .evidence_visualizer import render_aligned_pair, render_body_masks, render_person_masks, render_verified_matches
 from .relationship_scorer import RelationshipScorer
 
 
@@ -34,6 +35,11 @@ class PairAnalysisService:
         self.ransac = RANSACVerifier(settings.ransac.reprojection_threshold)
         self.flip = FlipDetector(self.sift, self.ransac)
         self.body_parts = BodyPartDetector(settings.body_parts, settings.sift.max_dimension, settings.ransac.reprojection_threshold) if settings.body_parts.enabled else None
+        self.person_segmentation = (
+            PersonSegmentationDetector(settings.person_segmentation, settings.sift.max_dimension)
+            if settings.person_segmentation.enabled
+            else None
+        )
         self.scorer = RelationshipScorer(settings.relationship)
 
     def analyze_bytes(
@@ -110,13 +116,22 @@ class PairAnalysisService:
             embedding_similarity = float(np.dot(vector_a, vector_b) / max(np.linalg.norm(vector_a) * np.linalg.norm(vector_b), 1e-12))
         body_gate, body_suspected, similar_person_only, body_part_inliers = False, False, False, {}
         foreground_ransac, background_ransac = RansacResult(), RansacResult()
+        person_masks: tuple[np.ndarray, np.ndarray] | None = None
+        person_detected_a = person_detected_b = person_mask_used = False
         geometry_is_credible = (
             best_sift.good_match_count >= self.settings.sift.min_good_matches
             and best_ransac.inlier_count >= 4
         )
         if self.body_parts is not None and geometry_is_credible:
+            if self.person_segmentation is not None:
+                detected_masks = self.person_segmentation.segment_many([first, verification_second])
+                person_detected_a = bool(detected_masks[0].any())
+                person_detected_b = bool(detected_masks[1].any())
+                if person_detected_a and person_detected_b:
+                    person_masks = (detected_masks[0], detected_masks[1])
+                    person_mask_used = True
             body_gate, body_suspected, similar_person_only, body_part_inliers, foreground_ransac, background_ransac = self.body_parts.verify_matches(
-                first, verification_second, best_sift, best_ransac
+                first, verification_second, best_sift, best_ransac, person_masks
             )
         foreground_verified = (
             body_gate
@@ -229,9 +244,17 @@ class PairAnalysisService:
             blur_variance_b=round(blur_variance_b, 2),
             blurred_crop_suspected=blurred_crop_suspected,
             whole_image_fallback_used=whole_image_fallback,
+            person_mask_used=person_mask_used,
+            person_detected_a=person_detected_a,
+            person_detected_b=person_detected_b,
         )
         result = self.scorer.score(evidence)
         if include_visualizations:
+            if transform != "original":
+                result.visualizations["aligned_pair"] = render_aligned_pair(
+                    first,
+                    verification_second,
+                )
             match_image = render_verified_matches(
                 first,
                 verification_second,
@@ -245,4 +268,13 @@ class PairAnalysisService:
                 mask_image = render_body_masks(first, verification_second, masks_a, masks_b)
                 if mask_image:
                     result.visualizations["body_parts"] = mask_image
+                if person_masks is not None:
+                    combined_a, combined_b = person_masks[0].copy(), person_masks[1].copy()
+                    for organ_mask in masks_a.values():
+                        combined_a |= organ_mask
+                    for organ_mask in masks_b.values():
+                        combined_b |= organ_mask
+                    person_image = render_person_masks(first, verification_second, combined_a, combined_b)
+                    if person_image:
+                        result.visualizations["person_mask"] = person_image
         return result

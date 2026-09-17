@@ -1,26 +1,47 @@
 # Image Relation Inspector
 
-ระบบตรวจภาพซ้ำ ภาพดัดแปลง ภาพครอป/เบลอ ภาพกลับด้าน ภาพหมุน 90/180/270 องศา และกลุ่มภาพสัมพันธ์ด้วย SHA-256, pHash, SSCD, FAISS, SIFT, RANSAC และโมเดลแยกอวัยวะ
+ระบบช่วยตรวจการนำภาพเดิมกลับมาใช้ เช่น ไฟล์ซ้ำ ภาพบีบอัดใหม่ ภาพครอป ภาพเบลอ ภาพกลับด้าน ภาพหมุน 90/180/270 องศา การเปลี่ยนฉาก และการใช้สถานที่เดิมข้ามงาน
 
-คู่มือภาษาไทยฉบับเต็ม รวมสถาปัตยกรรม รายละเอียดทุกโมดูล การติดตั้ง GPU และการย้ายเครื่อง: [PROJECT_GUIDE_TH.md](PROJECT_GUIDE_TH.md)
+ระบบไม่ได้ตัดสินจาก AI ตัวเดียว แต่รวมหลักฐานจาก SHA-256, pHash, SSCD, FAISS, SIFT, RANSAC, YOLO26 แยกบุคคล และโมเดลแยกอวัยวะ พร้อมแสดงเหตุผลและภาพหลักฐานให้เจ้าหน้าที่ตรวจสอบ
 
-Production-oriented MVP for explainable, multi-signal image relationship analysis. It detects exact duplicates, perceptually modified images, global semantic similarity, local feature overlap, geometric transformations, crops, and horizontal mirrors without treating one model score as proof.
+## เอกสารสำคัญ
 
-## Architecture
+- [ระบบทำงานอย่างไร](HOW_IT_WORKS_TH.md) — ลำดับการตรวจ เกณฑ์ทุกเทคโนโลยี และผลเมื่อเพิ่ม/ลดค่า
+- [คู่มือโครงการฉบับเต็ม](PROJECT_GUIDE_TH.md) — โครงสร้าง ติดตั้ง GPU ย้ายเครื่อง และแก้ปัญหา
+- [แนวทาง Production](production.md) — การแยก Web/API, AI Worker, Queue และ Storage
+- [ลิขสิทธิ์ไลบรารี](THIRD_PARTY_LICENSES.md)
+
+## ระบบทำงานแบบย่อ
 
 ```text
-Upload -> validation -> SHA-256 -> rotation/flip-aware pHash
-                                    -> SSCD + FAISS candidates
-                                    -> SIFT + RANSAC verification
-                                    -> score fusion -> relationship subgroups
-                                    -> source-number presentation groups
+รับและตรวจไฟล์
+      ↓
+SHA-256 ตรวจไฟล์ที่เหมือนกันทุกไบต์
+      ↓
+pHash ตรวจภาพรวม รวมภาพกลับด้านและภาพหมุน
+      ↓
+SSCD + FAISS ค้น Candidate จากคลังภาพ
+      ↓
+SIFT + RANSAC ยืนยันรายละเอียดและตำแหน่ง
+      ↓
+YOLO26 แยกตัวบุคคลออกจากฉาก โดยรวม mask กับ organ.pt เพื่อเติมส่วนที่ตรวจตกหล่น แล้ว organ.pt แจกแจงหลักฐานรายอวัยวะ
+
+ภาพเบลอใช้หลักฐาน SIFT/RANSAC ทั้งภาพเป็น fallback แบบเข้มงวด
+      ↓
+รวมคะแนน → แสดงผล → จัดกลุ่ม
 ```
 
-FastAPI owns the HTTP interface, SQLAlchemy persists metadata and evidence, and React supplies the operator interface. Local mode runs batch jobs in a background thread without requiring Redis. Celery/Redis is an optional production extension. Algorithms are isolated behind focused components and replaceable interfaces. Existing fingerprints and embeddings are retained so new images can be processed incrementally.
+ภาพใหม่ที่อัปโหลดภายหลังยังค้นเทียบกับภาพเก่าในคลังได้ ไม่ต้องล้างฐานข้อมูลทุกครั้ง
 
-For filenames containing `home_<10 digits>` or `splitter_<10 digits>`, pairs carrying the same source number are skipped before expensive SIFT verification. The Groups page uses that number only as an outer presentation group and preserves detected graph components as subgroups; it does not create artificial image relationships.
+## ผลลัพธ์หลัก
 
-## Environment
+- **เข้าข่ายใช้ภาพเดิม** — หลักฐานเพียงพอ เช่น ไฟล์เดียวกันหรือภาพเดิมถูกแก้ไข
+- **ควรตรวจสอบโดยเจ้าหน้าที่** — พบความสัมพันธ์ เช่น สถานที่เดิมหรืออาจเปลี่ยนฉาก
+- **ยังไม่เข้าข่ายใช้ภาพเดิม** — หลักฐานยังไม่เพียงพอ
+
+ผลเป็นเครื่องมือช่วยคัดกรอง ไม่ใช่การยืนยันตัวบุคคลหรือการทุจริตแบบเด็ดขาด
+
+## ติดตั้งบน Windows ด้วย Conda
 
 ```powershell
 conda create -n fake-check-in -c conda-forge --override-channels python=3.11 pip nodejs=22 -y
@@ -28,9 +49,7 @@ conda activate fake-check-in
 python -m pip install -e ".[dev]"
 ```
 
-SSCD downloads the official `sscd_disc_mixup` TorchScript model on first use and stores it at `data/models/sscd_disc_mixup.torchscript.pt`. Set `EMBEDDING__DEVICE=cpu`, `cuda`, or `auto`. CUDA falls back to CPU only when `allow_cpu_fallback` is enabled.
-
-Build the frontend once:
+สร้างหน้าเว็บครั้งแรก หรือทุกครั้งหลังแก้ `frontend/src`:
 
 ```powershell
 cd frontend
@@ -39,58 +58,123 @@ npm run build
 cd ..
 ```
 
-Start the application with Python:
+ห้ามลบ `frontend/dist` หากต้องการให้ FastAPI แสดงหน้าเว็บ เพราะเป็นไฟล์ที่ Backend ใช้เสิร์ฟ React
+
+## เริ่มระบบ
 
 ```powershell
+conda activate fake-check-in
 python -m backend.app.main
 ```
 
-Development auto-reload is enabled in `config/default.yaml`. Production and Docker set `APP__RELOAD=false`.
+เปิด:
 
-Optional: start a Celery worker only for a deployment that has been wired to Redis. It is not required by the current local batch route:
+- หน้าเว็บ: <http://127.0.0.1:8000>
+- API documentation: <http://127.0.0.1:8000/docs>
+
+หากหน้าเว็บยังเป็นเวอร์ชันเก่า ให้ build ใหม่แล้วกด `Ctrl + F5`
+
+## ตั้งค่าโดยไม่แก้โค้ด
+
+ค่ามาตรฐานอยู่ใน `config/default.yaml` ส่วนค่าที่ต้องการปรับเฉพาะเครื่องให้ใช้ `.env`:
 
 ```powershell
-python -m celery -A backend.app.workers.celery_app worker --loglevel=INFO
+Copy-Item .env.example .env
 ```
 
-Open `http://127.0.0.1:8000`. API documentation is at `/docs`.
+จากนั้นแก้ค่าใน `.env` และ restart Backend ระบบโหลด `.env` อัตโนมัติ ตัวอย่าง:
 
-## Configuration
+```dotenv
+# เพิ่ม Candidate ต่อภาพ: ลดโอกาสพลาด แต่ประมวลผลช้าลง
+VECTOR_SEARCH__TOP_K=50
 
-The single source of truth is `config/default.yaml`. Environment overrides use `SECTION__FIELD`, for example `VECTOR_SEARCH__TOP_K=100`. Configuration is strongly validated and invalid thresholds fail during startup. `.env.example` contains production service overrides.
+# เพิ่ม: pHash ยอมรับภาพที่แตกต่างมากขึ้น
+PHASH__MAX_HAMMING_DISTANCE=12
 
-## API
+# เพิ่ม: RANSAC ต้องมีจุดยืนยันมากขึ้น
+RANSAC__MIN_INLIERS=10
+```
 
-- `GET /health`
-- `GET /api/v1/dashboard`
-- `POST /api/v1/images`
-- `GET /api/v1/images/{id}`
-- `GET /api/v1/images/{id}/content`
-- `POST /api/v1/compare`
-- `POST /api/v1/batches`
-- `GET /api/v1/jobs/{id}`
-- `GET /api/v1/groups`
+ข้อควรจำ:
 
-React routes use an SPA fallback, so refreshing `/compare`, `/batch`, or `/groups` keeps the current page instead of returning an API 404.
+- ค่า ratio/similarity/coverage ใช้ช่วง `0–1`
+- เพิ่มค่า `MIN_*` ส่วนใหญ่หมายถึงเข้มงวดขึ้น
+- เพิ่มค่า `MAX_*` ส่วนใหญ่มักหมายถึงยอมรับความแตกต่างมากขึ้น
+- เปลี่ยนครั้งละหนึ่งค่าและทดสอบหลายประเภทภาพ
+- ค่าน้ำหนักคะแนนทั้งสี่ตัวต้องรวมกันเป็น `1.00`
+- `.env.example` มีรายการ threshold พร้อมคำอธิบายไทยครบ
 
-## Tests
+## การใช้งานหน้าเว็บ
+
+### Dashboard และรายงาน Excel
+
+Dashboard แสดงกราฟสัดส่วนภาพ กราฟสัดส่วนงาน และรายการเลขงานที่พบการใช้ภาพซ้ำ ข้อมูลระบบจะโหลดใหม่อัตโนมัติทุก 10 วินาที
+
+กรอก “ภาพทั้งหมด” ด้วยตนเอง แล้วกด **ดาวน์โหลด Excel ล่าสุด** ระบบจะสร้างไฟล์จากผลประมวลผลปัจจุบันทุกครั้ง ภายในไฟล์มี:
+
+- กราฟโดนัทสัดส่วนภาพพร้อมเปอร์เซ็นต์
+- กราฟโดนัทสัดส่วนงานพร้อมเปอร์เซ็นต์
+- จำนวนภาพในระบบและภาพเข้าข่ายใช้ซ้ำ
+- จำนวนงานทั้งหมดและงานที่พบใช้ภาพซ้ำ
+- Sheet รายการเลขงานซ้ำสำหรับกรองหรือคัดลอกไป PowerPoint
+
+งานนับจากเลข 10 หลักหลัง `home_` หรือ `splitter_` เท่านั้น ส่วน “ภาพทั้งหมด” ไม่มีอยู่ในฐานข้อมูลจึงเป็นช่องกรอกเอง
+
+### เปรียบเทียบสองภาพ
+
+เลือกภาพ A และ B แล้วกดเริ่มวิเคราะห์ หน้าเว็บจะแสดงคำตัดสิน เหตุผล ค่าของแต่ละเทคโนโลยี ภาพหลังจัดแนว และภาพเส้น SIFT/RANSAC
+
+### วิเคราะห์หลายภาพ
+
+เลือกหลายไฟล์หรือทั้งโฟลเดอร์ ระบบสร้าง embedding เป็น batch, ใช้ FAISS หา Candidate แล้วตรวจแต่ละคู่ งานยังทำต่อเมื่อเปลี่ยนหน้า และหน้าเว็บเชื่อมกลับไปยังงานเดิมได้
+
+### กลุ่มภาพสัมพันธ์
+
+กลุ่มย่อยเกิดจากความสัมพันธ์ที่ตรวจพบจริง ส่วนชื่อไฟล์รูปแบบ `home_<เลข 10 หลัก>` หรือ `splitter_<เลข 10 หลัก>` ใช้รวมกลุ่มย่อยไว้ใต้กลุ่มใหญ่เดียวกันเพื่อให้อ่านง่าย โดยไม่สร้างความสัมพันธ์ปลอม
+
+เมื่อชี้แถวความสัมพันธ์ ภาพคู่ด้านบนจะยกขึ้นพร้อมกรอบเขียวและส้ม กดแถวเพื่อเปิดคู่นั้นในหน้าเปรียบเทียบ
+
+## รูปแบบชื่อไฟล์ที่ช่วยลดเวลา
+
+ตัวอย่าง:
+
+```text
+new_20260813_home_1234567890_xxx_1.jpeg
+new_20260813_splitter_1234567890_xxx_2.jpeg
+```
+
+เลข 10 หลักเดียวกันหมายถึงแหล่งงานเดียวกันตามกติกาธุรกิจ ระบบจึงไม่ส่งคู่นั้นเข้า SIFT ซ้ำ ชื่อที่ไม่มีรูปแบบนี้ยังทำงานตามปกติ
+
+## โครงสร้างหลัก
+
+```text
+backend/app/
+├─ api/routes/       REST API
+├─ core/             config, runtime และ logging
+├─ db/               SQLAlchemy models/session
+├─ detectors/        SHA-256, pHash, SIFT, RANSAC, person mask และอวัยวะ
+├─ embeddings/       SSCD
+├─ services/         วิเคราะห์คู่, batch, scoring และ grouping
+├─ storage/          จัดเก็บภาพ
+└─ vector_store/     FAISS
+
+frontend/src/
+├─ api/              เรียก Backend
+├─ components/       UI ที่ใช้ร่วมกัน
+└─ pages/            Dashboard, Compare, Batch และ Groups
+```
+
+## ทดสอบก่อน Commit
 
 ```powershell
-python -m pytest
+python -m pytest -q
 python -m ruff check backend tests
+cd frontend
+npm run build
 ```
 
-## Docker
+## หมายเหตุ Production
 
-`docker compose up --build` starts the API, worker, PostgreSQL, and Redis. The image starts runtime services through Python commands.
+โหมดปัจจุบันเหมาะกับการพัฒนาและใช้งานเครื่องเดียว งาน AI ยังรันร่วมกับ Backend process การแยก Web VM และ AI VM ต้องเชื่อม Celery/Redis, Object Storage และฐานข้อมูลร่วมกันให้เสร็จก่อน รายละเอียดอยู่ใน [production.md](production.md)
 
-## Known limitations
-
-- The first SSCD request needs model download access when the cached TorchScript file is absent.
-- Manipulation localization is an extension point and is intentionally not presented as definitive AI-image detection.
-- Batch upload persistence and worker submission require the deployment-specific durable upload adapter before large production workloads.
-- The local FAISS index is single-host; use a replaceable distributed vector store for multi-worker deployments.
-- Thresholds require calibration with representative organizational evidence images before enforcement decisions.
-- Rotation-aware pHash candidate recovery may inspect stored hashes beyond FAISS Top-K; SIFT/RANSAC still verifies every accepted relationship.
-
-See `THIRD_PARTY_LICENSES.md` before enterprise deployment.
+SSCD อาจต้องดาวน์โหลดโมเดลครั้งแรก ส่วน YOLO26 จะไม่ดาวน์โหลดจาก request เพื่อความปลอดภัย ให้ผู้ดูแลเตรียมไฟล์ `yolo26s-seg.pt` ไว้ที่ `data/models/ultralytics/weights/` ล่วงหน้า ระบบไม่ใช้ paid API สำหรับการวิเคราะห์ภาพ หากโมเดลคนไม่พร้อม ระบบยังทำงานต่อด้วย mask จาก `organ.pt`

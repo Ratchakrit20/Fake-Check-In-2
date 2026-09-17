@@ -117,6 +117,7 @@ class BodyPartDetector:
         second: Image.Image,
         matches: SiftResult,
         ransac: RansacResult,
+        person_masks: tuple[np.ndarray, np.ndarray] | None = None,
     ) -> tuple[bool, bool, bool, dict[str, int], RansacResult, RansacResult]:
         masks_a, masks_b = self.segment_many([first, second])
         labels = set(self.config.identity_classes) | set(self.config.reuse_classes)
@@ -130,8 +131,22 @@ class BodyPartDetector:
                     union |= mask
             return union
 
-        foreground_a = union_mask(masks_a, matches.image_size_a)
-        foreground_b = union_mask(masks_b, matches.image_size_b)
+        organ_foreground_a = union_mask(masks_a, matches.image_size_a)
+        organ_foreground_b = union_mask(masks_b, matches.image_size_b)
+        # Person segmentation complements the organ mask for the coarse
+        # foreground/background split. A partially detected person must not
+        # erase valid limbs already found by organ.pt.
+        if person_masks is not None and person_masks[0].any() and person_masks[1].any():
+            person_foreground_a = cv2.resize(
+                person_masks[0].astype(np.uint8), matches.image_size_a, interpolation=cv2.INTER_NEAREST
+            ).astype(bool)
+            person_foreground_b = cv2.resize(
+                person_masks[1].astype(np.uint8), matches.image_size_b, interpolation=cv2.INTER_NEAREST
+            ).astype(bool)
+            foreground_a = person_foreground_a | organ_foreground_a
+            foreground_b = person_foreground_b | organ_foreground_b
+        else:
+            foreground_a, foreground_b = organ_foreground_a, organ_foreground_b
 
         def inside(mask: np.ndarray, point: np.ndarray) -> bool:
             x, y = np.rint(point).astype(int)

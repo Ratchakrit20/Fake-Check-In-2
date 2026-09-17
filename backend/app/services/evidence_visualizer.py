@@ -21,6 +21,17 @@ def _fit(image: Image.Image, max_height: int = 620) -> tuple[Image.Image, float]
     return image.resize(size, Image.Resampling.LANCZOS), scale
 
 
+def render_aligned_pair(first: Image.Image, second: Image.Image) -> str:
+    """Render the exact pair orientation used by downstream verification."""
+    left, _ = _fit(first.convert("RGB"))
+    right, _ = _fit(second.convert("RGB"))
+    height = max(left.height, right.height)
+    canvas = Image.new("RGB", (left.width + right.width, height), "#111827")
+    canvas.paste(left, (0, (height - left.height) // 2))
+    canvas.paste(right, (left.width, (height - right.height) // 2))
+    return _data_url(canvas)
+
+
 def render_verified_matches(
     first: Image.Image,
     second: Image.Image,
@@ -86,3 +97,10 @@ def render_body_masks(
     canvas.paste(left, (0, (height - left.height) // 2))
     canvas.paste(right, (left.width, (height - right.height) // 2))
     return _data_url(canvas)
+
+
+def render_person_masks(first: Image.Image, second: Image.Image, mask_a: np.ndarray, mask_b: np.ndarray) -> str | None:
+    """Render the coarse person masks used to split foreground and background."""
+    if not mask_a.any() and not mask_b.any():
+        return None
+    return render_body_masks(first, second, {"person": mask_a}, {"person": mask_b})

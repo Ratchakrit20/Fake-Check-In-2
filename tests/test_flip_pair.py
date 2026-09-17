@@ -21,10 +21,15 @@ def test_mirrored_recompressed_image_is_detected():
     draw.ellipse((130, 190, 220, 310), fill="blue")
     settings = get_settings().model_copy(deep=True)
     settings.body_parts.enabled = False
-    result = PairAnalysisService(settings).analyze_bytes(_jpeg(image, 92), _jpeg(ImageOps.mirror(image), 76))
+    result = PairAnalysisService(settings).analyze_bytes(
+        _jpeg(image, 92),
+        _jpeg(ImageOps.mirror(image), 76),
+        include_visualizations=True,
+    )
 
     assert result.evidence["flip_detected"] is True
     assert result.reuse_verdict.value == "reused"
+    assert result.visualizations["aligned_pair"].startswith("data:image/jpeg;base64,")
 
 
 def test_rotated_recompressed_images_are_detected():

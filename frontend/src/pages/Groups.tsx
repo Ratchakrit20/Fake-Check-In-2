@@ -11,13 +11,15 @@ const classificationNames: Record<string, string> = {
 
 function Subgroup({ subgroup }: { subgroup: RelationshipSubgroup }) {
   const navigate = useNavigate();
+  const [highlightedPair, setHighlightedPair] = useState<{ first: string; second: string } | null>(null);
   return <section className="relationship-subgroup">
     <div className="subgroup-title"><div><p className="eyebrow">กลุ่มย่อย #{subgroup.id}</p><h3>{subgroup.size} ภาพที่เชื่อมโยงกัน</h3></div><span><Link2 size={15}/>{subgroup.relationships.length} คู่</span></div>
-    <div className="group-gallery">{subgroup.images.map(image => <figure key={image.id}><img src={image.url} alt={image.filename} loading="lazy"/><figcaption><strong>{image.filename}</strong><small>{image.width} × {image.height}</small></figcaption></figure>)}</div>
+    <div className="group-gallery">{subgroup.images.map(image => <figure className={image.id === highlightedPair?.first ? "related-first" : image.id === highlightedPair?.second ? "related-second" : ""} key={image.id}><img src={image.url} alt={image.filename} loading="lazy"/><figcaption><strong title={image.filename}>{image.filename}</strong><small>{image.width} × {image.height}</small></figcaption></figure>)}</div>
     <div className="relation-list"><h4>ความสัมพันธ์ภายในกลุ่มย่อย</h4>{subgroup.relationships.map((relation, index) => {
       const first = subgroup.images.find(image => image.id === relation.image_a_id);
       const second = subgroup.images.find(image => image.id === relation.image_b_id);
-      return <button type="button" key={`${relation.image_a_id}-${relation.image_b_id}`} onClick={() => navigate(`/compare?imageA=${encodeURIComponent(relation.image_a_id)}&imageB=${encodeURIComponent(relation.image_b_id)}`)} aria-label={`เปรียบเทียบ ${first?.filename ?? "ภาพแรก"} กับ ${second?.filename ?? "ภาพที่สอง"}`}><span>{index + 1}</span><p><strong>{first?.filename}</strong><small>เชื่อมโยงกับ</small><strong>{second?.filename}</strong></p><em>{classificationNames[relation.classification] ?? relation.classification}</em><b>{Math.round(relation.score * 100)}%</b></button>;
+      const showPair = () => setHighlightedPair({ first: relation.image_a_id, second: relation.image_b_id });
+      return <button type="button" key={`${relation.image_a_id}-${relation.image_b_id}`} onMouseEnter={showPair} onMouseLeave={() => setHighlightedPair(null)} onFocus={showPair} onBlur={() => setHighlightedPair(null)} onClick={() => navigate(`/compare?imageA=${encodeURIComponent(relation.image_a_id)}&imageB=${encodeURIComponent(relation.image_b_id)}`)} aria-label={`เปรียบเทียบ ${first?.filename ?? "ภาพแรก"} กับ ${second?.filename ?? "ภาพที่สอง"}`}><span>{index + 1}</span><p><strong className="relation-name-first" title={first?.filename}>{first?.filename}</strong><small>เชื่อมโยงกับ</small><strong className="relation-name-second" title={second?.filename}>{second?.filename}</strong></p><em>{classificationNames[relation.classification] ?? relation.classification}</em><b>{Math.round(relation.score * 100)}%</b></button>;
     })}</div>
   </section>;
 }

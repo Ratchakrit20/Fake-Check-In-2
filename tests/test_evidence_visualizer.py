@@ -2,7 +2,7 @@ import numpy as np
 from PIL import Image
 
 from backend.app.domain.schemas import RansacResult, SiftResult
-from backend.app.services.evidence_visualizer import render_body_masks, render_verified_matches
+from backend.app.services.evidence_visualizer import render_body_masks, render_person_masks, render_verified_matches
 
 
 def test_verified_match_visualization_is_a_jpeg_data_url():
@@ -23,4 +23,12 @@ def test_body_mask_visualization_is_a_jpeg_data_url():
     mask = np.zeros((80, 100), dtype=bool)
     mask[10:40, 20:60] = True
     result = render_body_masks(image, image, {"torso": mask}, {"torso": mask})
+    assert result is not None and result.startswith("data:image/jpeg;base64,")
+
+
+def test_person_mask_visualization_is_a_jpeg_data_url():
+    image = Image.new("RGB", (100, 80), "white")
+    mask = np.zeros((80, 100), dtype=bool)
+    mask[8:72, 30:70] = True
+    result = render_person_masks(image, image, mask, mask)
     assert result is not None and result.startswith("data:image/jpeg;base64,")

@@ -7,9 +7,11 @@ from pathlib import Path
 from typing import Literal
 
 import yaml
+from dotenv import load_dotenv
 from pydantic import BaseModel, Field, model_validator
 
 ROOT = Path(__file__).resolve().parents[3]
+load_dotenv(ROOT / ".env", override=False)
 
 
 class AppConfig(BaseModel):
@@ -99,6 +101,16 @@ class BodyPartsConfig(BaseModel):
     single_part_suspect_min_inliers: int = Field(gt=0)
 
 
+class PersonSegmentationConfig(BaseModel):
+    enabled: bool = True
+    model_path: Path
+    config_dir: Path
+    device: str = "auto"
+    image_size: int = Field(ge=320, le=2048)
+    confidence: float = Field(gt=0, lt=1)
+    cache_size: int = Field(gt=0)
+
+
 class RelationshipWeights(BaseModel):
     phash: float = Field(ge=0)
     embedding: float = Field(ge=0)
@@ -182,6 +194,7 @@ class Settings(BaseModel):
     ransac: RansacConfig
     flip_detection: FlipConfig
     body_parts: BodyPartsConfig
+    person_segmentation: PersonSegmentationConfig
     relationship: RelationshipConfig
     jobs: JobsConfig
     performance: PerformanceConfig
@@ -193,17 +206,26 @@ def _apply_environment(data: dict) -> dict:
     result = json.loads(json.dumps(data))
     for key, raw in os.environ.items():
         parts = key.lower().split("__")
-        if len(parts) != 2 or parts[0] not in result or parts[1] not in result[parts[0]]:
+        if len(parts) < 2:
             continue
-        current = result[parts[0]][parts[1]]
+        target = result
+        for part in parts[:-1]:
+            if not isinstance(target, dict) or part not in target:
+                target = None
+                break
+            target = target[part]
+        field = parts[-1]
+        if not isinstance(target, dict) or field not in target:
+            continue
+        current = target[field]
         if isinstance(current, bool):
-            result[parts[0]][parts[1]] = raw.lower() in {"1", "true", "yes", "on"}
+            target[field] = raw.lower() in {"1", "true", "yes", "on"}
         elif isinstance(current, int):
-            result[parts[0]][parts[1]] = int(raw)
+            target[field] = int(raw)
         elif isinstance(current, float):
-            result[parts[0]][parts[1]] = float(raw)
+            target[field] = float(raw)
         else:
-            result[parts[0]][parts[1]] = raw
+            target[field] = raw
     return result
 
 
@@ -221,6 +243,8 @@ def get_settings() -> Settings:
         (settings.vector_search, "metadata_path"),
         (settings.body_parts, "model_path"),
         (settings.body_parts, "config_dir"),
+        (settings.person_segmentation, "model_path"),
+        (settings.person_segmentation, "config_dir"),
     )
     for section, field_name in path_fields:
         field = getattr(section, field_name)

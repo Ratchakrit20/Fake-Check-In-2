@@ -36,10 +36,26 @@ export async function getStoredImageFile(imageId: string): Promise<File> {
   });
 }
 
-export async function getDashboard() {
+export type DashboardData = {
+  total_images: number;
+  related_pairs: number;
+  pending_jobs: number;
+  failed_jobs: number;
+  images_in_system: number;
+  reused_images: number;
+  total_jobs: number;
+  reused_jobs: number;
+  duplicate_jobs: Array<{ job_number: string; images_in_system: number; reused_images: number; evidence_links: number }>;
+};
+
+export async function getDashboard(): Promise<DashboardData> {
   const response = await fetch(`${API}/dashboard`);
   if (!response.ok) throw new Error("โหลดข้อมูลสรุปไม่สำเร็จ");
   return response.json();
+}
+
+export function downloadDashboardReport(totalImages: number) {
+  window.location.href = `${API}/dashboard/report.xlsx?total_images=${Math.max(0, Math.trunc(totalImages))}`;
 }
 
 export async function createBatch(files: File[]): Promise<{ job_id: string; status: string; file_count: number }> {
