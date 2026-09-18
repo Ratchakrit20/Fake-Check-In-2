@@ -2,7 +2,7 @@ import numpy as np
 from PIL import Image
 
 from backend.app.domain.schemas import RansacResult, SiftResult
-from backend.app.services.evidence_visualizer import render_body_masks, render_person_masks, render_verified_matches
+from backend.app.services.evidence_visualizer import render_body_masks, render_change_heatmap, render_verified_matches
 
 
 def test_verified_match_visualization_is_a_jpeg_data_url():
@@ -26,9 +26,23 @@ def test_body_mask_visualization_is_a_jpeg_data_url():
     assert result is not None and result.startswith("data:image/jpeg;base64,")
 
 
-def test_person_mask_visualization_is_a_jpeg_data_url():
-    image = Image.new("RGB", (100, 80), "white")
+def test_change_heatmap_reports_foreground_and_background_without_changing_verdict():
+    first = Image.new("RGB", (100, 80), "white")
+    second_array = np.full((80, 100, 3), 255, dtype=np.uint8)
+    second_array[:, 60:] = 0
+    second = Image.fromarray(second_array)
     mask = np.zeros((80, 100), dtype=bool)
-    mask[8:72, 30:70] = True
-    result = render_person_masks(image, image, mask, mask)
+    mask[:, :50] = True
+    matches = SiftResult(image_size_a=(100, 80), image_size_b=(100, 80))
+    alignment = RansacResult(
+        homography_found=True,
+        transform_matrix=np.eye(3).tolist(),
+    )
+
+    result, foreground_change, background_change = render_change_heatmap(
+        first, second, matches, alignment, mask, mask
+    )
+
     assert result is not None and result.startswith("data:image/jpeg;base64,")
+    assert foreground_change is not None and foreground_change < 0.05
+    assert background_change is not None and background_change > 0.5

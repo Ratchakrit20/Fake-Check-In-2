@@ -33,9 +33,6 @@ FAISS เลือกเฉพาะภาพใกล้เคียง Top-K
 SIFT จับรายละเอียดเฉพาะจุด + RANSAC ยืนยันตำแหน่ง (CPU หลาย worker)
         |
         v
-YOLO26 สร้าง mask บุคคลเพื่อแยกจุดบนคนออกจากฉาก (GPU เมื่อใช้ได้)
-        |
-        v
 โมเดล mask แยกอวัยวะ (GPU เมื่อใช้ได้)
         |
         v
@@ -90,7 +87,6 @@ fake ckeck in/
 │  │  ├─ ransac_verifier.py       กรองคู่จุดผิดและยืนยันความสัมพันธ์เชิงเรขาคณิต
 │  │  ├─ flip_detector.py         สนับสนุนการตรวจภาพกลับด้าน
 │  │  ├─ image_quality_detector.py วัดความเบลอ
-│  │  ├─ person_segmentation_detector.py ใช้ YOLO26 แยก mask บุคคล/ฉาก
 │  │  └─ body_part_detector.py    ใช้ organ.pt แยกและตรวจจุดบนอวัยวะ
 │  ├─ embeddings/
 │  │  └─ sscd.py                  โหลด SSCD, เลือกอุปกรณ์ และสร้าง embedding แบบ batch
@@ -115,7 +111,7 @@ fake ckeck in/
 ├─ data/images/                   ไฟล์ภาพที่ระบบจัดเก็บ
 ├─ data/app.db                    ฐานข้อมูล SQLite
 ├─ data/faiss/                    FAISS index และรายการ image id
-├─ data/models/                   SSCD, YOLO26 และโมเดลแยกอวัยวะ
+├─ data/models/                   SSCD และโมเดลแยกอวัยวะ
 ├─ tests/                         unit tests
 ├─ environment.yml               Conda environment แบบพกพา
 ├─ THIRD_PARTY_LICENSES.md        สรุป license ของ dependency หลัก
@@ -162,7 +158,6 @@ python -c "import torch; print(torch.cuda.is_available()); print(torch.cuda.get_
 ### 5.4 โมเดล
 
 - วางโมเดลอวัยวะที่ `data/models/human_mask/organ.pt`
-- วาง YOLO26 person segmentation ที่ `data/models/ultralytics/weights/yolo26s-seg.pt` ก่อนเปิดงานจริง ระบบไม่ดาวน์โหลดโมเดลจาก request; หากไม่มีไฟล์นี้จะ fallback ไปใช้ mask จาก `organ.pt`
 - SSCD จะดาวน์โหลดครั้งแรกไปที่ `data/models/sscd_disc_mixup.torchscript.pt`
 - หากเครื่องใหม่ไม่มีอินเทอร์เน็ต ให้คัดลอกทั้ง `data/models` จากเครื่องเดิม
 

@@ -101,16 +101,6 @@ class BodyPartsConfig(BaseModel):
     single_part_suspect_min_inliers: int = Field(gt=0)
 
 
-class PersonSegmentationConfig(BaseModel):
-    enabled: bool = True
-    model_path: Path
-    config_dir: Path
-    device: str = "auto"
-    image_size: int = Field(ge=320, le=2048)
-    confidence: float = Field(gt=0, lt=1)
-    cache_size: int = Field(gt=0)
-
-
 class RelationshipWeights(BaseModel):
     phash: float = Field(ge=0)
     embedding: float = Field(ge=0)
@@ -194,7 +184,6 @@ class Settings(BaseModel):
     ransac: RansacConfig
     flip_detection: FlipConfig
     body_parts: BodyPartsConfig
-    person_segmentation: PersonSegmentationConfig
     relationship: RelationshipConfig
     jobs: JobsConfig
     performance: PerformanceConfig
@@ -243,8 +232,6 @@ def get_settings() -> Settings:
         (settings.vector_search, "metadata_path"),
         (settings.body_parts, "model_path"),
         (settings.body_parts, "config_dir"),
-        (settings.person_segmentation, "model_path"),
-        (settings.person_segmentation, "config_dir"),
     )
     for section, field_name in path_fields:
         field = getattr(section, field_name)

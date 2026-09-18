@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import io
 
+import cv2
 import numpy as np
 from PIL import Image, ImageDraw
 
@@ -99,8 +100,83 @@ def render_body_masks(
     return _data_url(canvas)
 
 
-def render_person_masks(first: Image.Image, second: Image.Image, mask_a: np.ndarray, mask_b: np.ndarray) -> str | None:
-    """Render the coarse person masks used to split foreground and background."""
-    if not mask_a.any() and not mask_b.any():
-        return None
-    return render_body_masks(first, second, {"person": mask_a}, {"person": mask_b})
+def render_change_heatmap(
+    first: Image.Image,
+    second: Image.Image,
+    matches: SiftResult,
+    alignment: RansacResult,
+    foreground_mask_a: np.ndarray,
+    foreground_mask_b: np.ndarray,
+) -> tuple[str | None, float | None, float | None]:
+    """Render alignment-aware pixel changes for diagnostics, never verdicts."""
+    if alignment.transform_matrix is None or not alignment.homography_found:
+        return None, None, None
+    width_a, height_a = matches.image_size_a
+    width_b, height_b = matches.image_size_b
+    if min(width_a, height_a, width_b, height_b) <= 0:
+        return None, None, None
+    image_a = np.asarray(first.resize((width_a, height_a), Image.Resampling.LANCZOS).convert("RGB"))
+    image_b = np.asarray(second.resize((width_b, height_b), Image.Resampling.LANCZOS).convert("RGB"))
+    try:
+        inverse = np.linalg.inv(np.asarray(alignment.transform_matrix, dtype=np.float64))
+    except np.linalg.LinAlgError:
+        return None, None, None
+    def aligned_change(
+        reference: np.ndarray,
+        target: np.ndarray,
+        target_to_reference: np.ndarray,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        height, width = reference.shape[:2]
+        aligned = cv2.warpPerspective(target, target_to_reference, (width, height), flags=cv2.INTER_LINEAR)
+        valid_area = cv2.warpPerspective(
+            np.full(target.shape[:2], 255, dtype=np.uint8),
+            target_to_reference,
+            (width, height),
+            flags=cv2.INTER_NEAREST,
+        )
+        gray_reference = cv2.equalizeHist(
+            cv2.GaussianBlur(cv2.cvtColor(reference, cv2.COLOR_RGB2GRAY), (5, 5), 0)
+        )
+        gray_aligned = cv2.equalizeHist(
+            cv2.GaussianBlur(cv2.cvtColor(aligned, cv2.COLOR_RGB2GRAY), (5, 5), 0)
+        )
+        difference = cv2.absdiff(gray_reference, gray_aligned)
+        changed_area = np.where((difference >= 32) & (valid_area > 0), 255, 0).astype(np.uint8)
+        changed_area = cv2.morphologyEx(changed_area, cv2.MORPH_OPEN, np.ones((3, 3), dtype=np.uint8))
+        changed_area = cv2.morphologyEx(changed_area, cv2.MORPH_CLOSE, np.ones((7, 7), dtype=np.uint8))
+        return changed_area, valid_area
+
+    matrix = np.asarray(alignment.transform_matrix, dtype=np.float64)
+    changed, valid = aligned_change(image_a, image_b, inverse)
+    changed_reverse, valid_reverse = aligned_change(image_b, image_a, matrix)
+    foreground_a = cv2.resize(
+        foreground_mask_a.astype(np.uint8), (width_a, height_a), interpolation=cv2.INTER_NEAREST
+    ) > 0
+    foreground_b = cv2.resize(
+        foreground_mask_b.astype(np.uint8), (width_b, height_b), interpolation=cv2.INTER_NEAREST
+    ) > 0
+
+    def fraction(changed_area: np.ndarray, valid_area: np.ndarray, region: np.ndarray) -> float | None:
+        active = region & (valid_area > 0)
+        count = int(active.sum())
+        return None if count == 0 else float(((changed_area > 0) & active).sum() / count)
+
+    def average(first_value: float | None, second_value: float | None) -> float | None:
+        values = [value for value in (first_value, second_value) if value is not None]
+        return None if not values else sum(values) / len(values)
+
+    foreground_change = average(
+        fraction(changed, valid, foreground_a),
+        fraction(changed_reverse, valid_reverse, foreground_b),
+    )
+    background_change = average(
+        fraction(changed, valid, ~foreground_a),
+        fraction(changed_reverse, valid_reverse, ~foreground_b),
+    )
+    heat_bgr = cv2.applyColorMap(changed, cv2.COLORMAP_JET)
+    heat_rgb = cv2.cvtColor(heat_bgr, cv2.COLOR_BGR2RGB)
+    overlay = image_a.copy()
+    selected = changed > 0
+    overlay[selected] = (overlay[selected] * 0.5 + heat_rgb[selected] * 0.5).astype(np.uint8)
+    overlay[valid == 0] = (overlay[valid == 0] * 0.25).astype(np.uint8)
+    return _data_url(Image.fromarray(overlay)), foreground_change, background_change

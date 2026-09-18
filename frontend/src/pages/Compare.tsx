@@ -39,9 +39,9 @@ const evidenceLabels: Record<string, string> = {
   blur_variance_b: "ความคมชัดภาพ B",
   blurred_crop_suspected: "ตรวจพบภาพเบลอหรือครอปจากภาพเดิม",
   whole_image_fallback_used: "ใช้อัตราตรงกันทั้งภาพแทนอวัยวะที่ตรวจไม่ครบ",
-  person_mask_used: "ใช้โมเดลคนแยกตัวบุคคลออกจากฉาก",
-  person_detected_a: "โมเดลคนตรวจพบคนในภาพ A",
-  person_detected_b: "โมเดลคนตรวจพบคนในภาพ B",
+  heatmap_foreground_change: "พื้นที่เปลี่ยนบนตัวบุคคลหลังจัดแนว",
+  heatmap_background_change: "พื้นที่เปลี่ยนบนฉากหลังหลังจัดแนว",
+  heatmap_used_for_decision: "นำ heatmap ไปตัดสินอัตโนมัติ",
 };
 
 function thaiConclusion(result: RelationshipResult): { title: string; detail: string } {
@@ -62,7 +62,7 @@ function thaiConclusion(result: RelationshipResult): { title: string; detail: st
     return { title: "เข้าข่ายภาพเดิมที่ถูกทำให้เบลอหรือครอบตัด", detail: "แม้รายละเอียดภาพหายไป แต่ยังพบจุดสำคัญที่สอดคล้องกันทางเรขาคณิตและเนื้อหาหลักยังตรงกัน" };
   }
   if (result.classification === "background_replaced") {
-    return { title: "มีแนวโน้มว่าใช้คนหรือวัตถุเดิม แล้วเปลี่ยนฉาก", detail: "พบจุดสำคัญชุดเดิมในตำแหน่งที่สอดคล้องกัน แต่ภาพโดยรวมและฉากแตกต่างกัน ควรให้ผู้ตรวจสอบยืนยัน" };
+    return { title: "พบบริเวณบุคคลเดิม แต่ฉากหลังแตกต่าง", detail: "จุดบนบริเวณบุคคลสอดคล้องกันทางเรขาคณิต ขณะที่หลักฐานจากฉากหลังไม่เพียงพอ จึงควรตรวจสอบว่าอาจมีการเปลี่ยนฉาก" };
   }
   if (result.classification === "same_image") {
     return { title: "เป็นภาพเดียวกัน แต่ไฟล์ต่างกัน", detail: "ภาพที่เห็นตรงกัน แต่อาจถูกบีบอัด ย่อ หรือบันทึกเป็นไฟล์ใหม่" };
@@ -74,10 +74,10 @@ function thaiConclusion(result: RelationshipResult): { title: string; detail: st
     return { title: "ภาพเดิมถูกดัดแปลง", detail: "พบหลักฐานว่าภาพมาจากแหล่งเดียวกัน เช่น ย่อ ขยาย ครอป หมุน ปรับสี หรือบีบอัดใหม่" };
   }
   if (result.classification === "same_scene_new_capture") {
-    return { title: "ตรวจพบสถานที่เดิมข้ามงาน", detail: "ฉากหลังตรงกันทางเรขาคณิต แม้ตัวบุคคลหรือวันถ่ายอาจต่างกัน ระบบจึงส่งเข้ากลุ่มตรวจสอบ" };
+    return { title: "พบรายละเอียดฉากหลังที่สอดคล้องกัน", detail: "จุดบริเวณฉากหลังผ่านการตรวจตำแหน่งทางเรขาคณิต แต่อาจเป็นสถานที่เดิม ลวดลายคล้ายกัน หรือภาพถ่ายคนละเวลา จึงต้องตรวจสอบเพิ่มเติม" };
   }
   if (result.classification === "repeated_checkin") {
-    return { title: "สงสัยใช้คนและสถานที่เดิมข้ามงาน", detail: "ฉากหลังตรงกันมาก และยังพบหลักฐานแยกต่างหากทั้งบริเวณระบุตัวบุคคลและลำตัว ควรตรวจสอบประวัติงาน" };
+    return { title: "พบจุดสอดคล้องทั้งบริเวณบุคคลและฉากหลัง", detail: "ระบบพบหลักฐานแยกกันในโซนบุคคลและโซนที่จัดเป็นฉากหลัง ผลนี้ยังไม่ยืนยันว่าสถานที่เดียวกัน จึงควรเปิดภาพหลักฐานและตรวจสอบประวัติงาน" };
   }
   return { title: "ไม่พบว่าเป็นภาพเดียวกัน", detail: "หลักฐานที่ตรวจพบยังไม่แสดงความสัมพันธ์ที่ชัดเจน" };
 }
@@ -110,7 +110,7 @@ function displayValue(key: string, value: unknown): string {
       .join(", ");
   }
   if (typeof value === "boolean") return value ? "ใช่" : "ไม่ใช่";
-  if (key.includes("similarity") || key.includes("ratio")) return `${(Number(value) * 100).toFixed(1)}%`;
+  if (key.includes("similarity") || key.includes("ratio") || key.includes("_change")) return `${(Number(value) * 100).toFixed(1)}%`;
   return String(value).replace("horizontal_flip", "กลับด้านแนวนอน").replace("original", "ภาพปกติ");
 }
 
@@ -123,7 +123,6 @@ function plainReasons(result: RelationshipResult): string[] {
   if (e.recapture_suspected === true) reasons.push("โครงสร้างภาพตรงกันเป็นบริเวณกว้าง แม้ความคมหรือลายพิกเซลเปลี่ยนจากการถ่ายผ่านอีกหน้าจอ");
   if (e.blurred_crop_suspected === true) reasons.push("ยังพบรายละเอียดชุดเดิมหลังภาพถูกทำให้เบลอหรือครอบตัด");
   if (e.whole_image_fallback_used === true) reasons.push("โมเดลอวัยวะตรวจได้ไม่ครบ จึงยืนยันเพิ่มด้วยจุดตรงกันที่กระจายทั่วภาพ");
-  if (e.person_mask_used === true) reasons.push("โมเดลคนช่วยแยกจุดบนตัวบุคคลออกจากฉากหลัง ก่อนให้ SIFT และ RANSAC ตรวจตำแหน่ง");
   if (e.body_reuse_gate === true) reasons.push("พบตำแหน่งบนร่างกายหลายส่วนตรงกันมากพอ จึงมีแนวโน้มว่านำคนจากภาพเดิมมาใช้");
   else if (e.body_reuse_suspected === true) reasons.push("พบอวัยวะบางส่วนตรงกัน แต่ควรตรวจด้วยสายตาเพิ่มเติม");
   if (typeof e.embedding_similarity === "number") reasons.push(`AI ประเมินว่าเนื้อหาโดยรวมคล้ายกัน ${(e.embedding_similarity * 100).toFixed(0)}%`);
@@ -142,8 +141,8 @@ function technologyEvidence(result: RelationshipResult) {
     { name: "pHash", detail: "ลายนิ้วมือภาพโดยรวม", passed: e.exact_duplicate === true || (phashDistance !== null && phashDistance <= 10), value: phashDistance === null ? "ไม่มีค่า" : `ต่าง ${phashDistance} จาก 64 จุด`, view: result.visualizations?.aligned_pair ? "aligned" as const : "compare" as const },
     { name: "SSCD", detail: "ลายนิ้วมือสำหรับตรวจภาพที่ถูกคัดลอกหรือดัดแปลง", passed: sscd !== null && sscd >= .65, value: sscd === null ? "ไม่มีค่า" : `คล้ายเชิงสำเนา ${(sscd * 100).toFixed(0)}%`, view: result.visualizations?.aligned_pair ? "aligned" as const : "compare" as const },
     { name: "SIFT + RANSAC", detail: "รายละเอียดและตำแหน่งที่ตรงกันจริง", passed: sift >= 12 && inliers >= 8, value: `ตรง ${sift} จุด ยืนยันตำแหน่ง ${inliers} จุด`, view: "matches" as const },
-    { name: "YOLO26 แยกบุคคล", detail: "แยกตัวบุคคลออกจากฉากเพื่อจัดหมวดจุด SIFT", passed: e.person_mask_used === true, value: e.person_mask_used === true ? "พบคนทั้งสองภาพและนำ mask มาใช้" : e.person_detected_a === true || e.person_detected_b === true ? "พบคนเพียงภาพเดียว จึงใช้ fallback" : "ไม่พบคนหรือโมเดลยังไม่พร้อม", view: "person" as const },
     { name: "โมเดลแยกอวัยวะ", detail: "ตรวจส่วนของคนที่อาจถูกนำมาใช้ซ้ำ", passed: e.body_reuse_gate === true || e.body_reuse_suspected === true || e.similar_person_only === true, value: e.body_reuse_gate === true ? "หลายส่วนของร่างกายตรงกัน" : e.body_reuse_suspected === true ? "พบอวัยวะบางส่วนตรงกัน" : e.similar_person_only === true ? "พบศีรษะหรือคอคล้ายกัน" : "ยังไม่เข้าเกณฑ์", view: "body" as const },
+    { name: "Heatmap หลังจัดแนว", detail: "แสดงพิกเซลที่เปลี่ยนบนคนและฉาก เป็นหลักฐานประกอบเท่านั้น", passed: Boolean(result.visualizations?.change_heatmap), status: "หลักฐานเสริม", value: typeof e.heatmap_foreground_change === "number" && typeof e.heatmap_background_change === "number" ? `คนเปลี่ยน ${(e.heatmap_foreground_change * 100).toFixed(0)}% · ฉากเปลี่ยน ${(e.heatmap_background_change * 100).toFixed(0)}%` : "สร้างไม่ได้เพราะหลักฐานจัดแนวยังไม่พอ", view: "heatmap" as const },
   ];
 }
 
@@ -153,7 +152,7 @@ export function Compare() {
   const loadedPair = useRef("");
   const [first, setFirst] = useState<File | null>(null), [second, setSecond] = useState<File | null>(null);
   const [result, setResult] = useState<RelationshipResult | null>(null), [error, setError] = useState(""), [loading, setLoading] = useState(false);
-  const [preview, setPreview] = useState<"a" | "b" | "compare" | "aligned" | "matches" | "body" | "person" | null>(null);
+  const [preview, setPreview] = useState<"a" | "b" | "compare" | "aligned" | "matches" | "body" | "heatmap" | null>(null);
   const firstUrl = useMemo(() => first ? URL.createObjectURL(first) : "", [first]);
   const secondUrl = useMemo(() => second ? URL.createObjectURL(second) : "", [second]);
   useEffect(() => () => { if (firstUrl) URL.revokeObjectURL(firstUrl); }, [firstUrl]);
@@ -194,9 +193,9 @@ export function Compare() {
           <div><h4>เหตุผลที่ระบบตัดสินแบบนี้</h4><ul>{plainReasons(result).map(reason => <li key={reason}>{reason}</li>)}</ul></div>
           <div className="source-images"><h4>ภาพที่นำมาตรวจ</h4><p>กดเพื่อเปิดดูภาพขนาดใหญ่</p><div><button onClick={() => setPreview("a")}><ImageIcon size={17}/><span>ภาพ A</span><small>{first?.name}</small></button><button onClick={() => setPreview("b")}><ImageIcon size={17}/><span>ภาพ B</span><small>{second?.name}</small></button></div></div>
         </div>
-        <details className="technology" open><summary>หลักฐานจากแต่ละเทคโนโลยี</summary><p className="technology-hint">รายการที่ไม่ผ่านเกณฑ์จะไม่ถูกใช้ยืนยันผล แต่ยังเปิดดูภาพที่นำไปตรวจได้</p>{result.visualizations?.aligned_pair && <div className="alignment-notice"><span>ภาพ A</span><b>ต้นฉบับ</b><i>เทียบกับ</i><span>ภาพ B</span><b>{evidenceTransformLabel(result.evidence).replace("ภาพ B ถูก", "").replace("เพื่อจัดแนว", "แล้ว")}</b></div>}<div className="technology-grid">{technologyEvidence(result).map(item => { const specialized = item.view === "matches" ? result.visualizations?.sift_ransac : item.view === "body" ? result.visualizations?.body_parts : item.view === "person" ? result.visualizations?.person_mask : item.view === "aligned" ? result.visualizations?.aligned_pair : null; const previewTarget = specialized ? item.view : result.visualizations?.aligned_pair ? "aligned" : "compare"; return <div className={item.passed ? "passed" : "not-passed"} key={item.name}><span className="tech-status">{item.passed ? "ผ่านเกณฑ์" : "ไม่ผ่านเกณฑ์"}</span><strong>{item.name}</strong><span>{item.detail}</span><b>{item.value}</b><button onClick={() => setPreview(previewTarget)}><ImageIcon size={15}/> {specialized ? "ดูหลักฐานที่ใช้จริง" : "ดูภาพที่นำไปตรวจ"}</button></div>; })}</div></details>
+        <details className="technology" open><summary>หลักฐานจากแต่ละเทคโนโลยี</summary><p className="technology-hint">รายการที่ไม่ผ่านเกณฑ์จะไม่ถูกใช้ยืนยันผล แต่ยังเปิดดูภาพที่นำไปตรวจได้</p>{result.visualizations?.aligned_pair && <div className="alignment-notice"><span>ภาพ A</span><b>ต้นฉบับ</b><i>เทียบกับ</i><span>ภาพ B</span><b>{evidenceTransformLabel(result.evidence).replace("ภาพ B ถูก", "").replace("เพื่อจัดแนว", "แล้ว")}</b></div>}<div className="technology-grid">{technologyEvidence(result).map(item => { const specialized = item.view === "matches" ? result.visualizations?.sift_ransac : item.view === "body" ? result.visualizations?.body_parts : item.view === "heatmap" ? result.visualizations?.change_heatmap : item.view === "aligned" ? result.visualizations?.aligned_pair : null; const previewTarget = specialized ? item.view : result.visualizations?.aligned_pair ? "aligned" : "compare"; return <div className={item.passed ? "passed" : "not-passed"} key={item.name}><span className="tech-status">{"status" in item ? item.status : item.passed ? "ผ่านเกณฑ์" : "ไม่ผ่านเกณฑ์"}</span><strong>{item.name}</strong><span>{item.detail}</span><b>{item.value}</b><button onClick={() => setPreview(previewTarget)}><ImageIcon size={15}/> {specialized ? "ดูหลักฐานที่ใช้จริง" : "ดูภาพที่นำไปตรวจ"}</button></div>; })}</div></details>
         <details className="technical"><summary>ดูค่าตรวจสอบสำหรับผู้เชี่ยวชาญ</summary><div className="evidence">{Object.entries(result.evidence).filter(([, value]) => value !== null).map(([key, value]) => <div key={key}><span>{evidenceLabels[key] ?? key}</span><strong>{displayValue(key, value)}</strong></div>)}</div></details>
-        {preview && <div className="image-modal" role="dialog" aria-modal="true" aria-label="ดูภาพเปรียบเทียบ" onClick={() => setPreview(null)}><button aria-label="ปิดภาพ"><X size={22}/></button>{preview === "compare" ? <div className="modal-comparison" onClick={event => event.stopPropagation()}><figure><img src={firstUrl} alt="ภาพ A"/><figcaption>ภาพ A — {first?.name}</figcaption></figure><figure><img src={secondUrl} alt="ภาพ B"/><figcaption>ภาพ B — {second?.name}</figcaption></figure></div> : preview === "aligned" || preview === "matches" || preview === "body" || preview === "person" ? <figure onClick={event => event.stopPropagation()}><img src={preview === "aligned" ? result.visualizations.aligned_pair : preview === "matches" ? result.visualizations.sift_ransac : preview === "person" ? result.visualizations.person_mask : result.visualizations.body_parts} alt="ภาพหลักฐาน"/><figcaption>{preview === "aligned" ? `ภาพที่ใช้วิเคราะห์ — ${evidenceTransformLabel(result.evidence)}` : preview === "matches" ? "เส้นสีเขียวคือจุดที่ SIFT พบและ RANSAC ยืนยันตำแหน่งแล้ว" : preview === "person" ? "สีฟ้าคือ mask บุคคลที่รวมผลจาก YOLO26 และ organ.pt แล้ว" : "สีที่ระบายคือบริเวณอวัยวะที่โมเดลตรวจพบ"}</figcaption></figure> : <figure onClick={event => event.stopPropagation()}><img src={preview === "a" ? firstUrl : secondUrl} alt={`ภาพ ${preview.toUpperCase()}`}/><figcaption>ภาพ {preview.toUpperCase()} — {preview === "a" ? first?.name : second?.name}</figcaption></figure>}</div>}
+        {preview && <div className="image-modal" role="dialog" aria-modal="true" aria-label="ดูภาพเปรียบเทียบ" onClick={() => setPreview(null)}><button aria-label="ปิดภาพ"><X size={22}/></button>{preview === "compare" ? <div className="modal-comparison" onClick={event => event.stopPropagation()}><figure><img src={firstUrl} alt="ภาพ A"/><figcaption>ภาพ A — {first?.name}</figcaption></figure><figure><img src={secondUrl} alt="ภาพ B"/><figcaption>ภาพ B — {second?.name}</figcaption></figure></div> : preview === "aligned" || preview === "matches" || preview === "body" || preview === "heatmap" ? <figure onClick={event => event.stopPropagation()}><img src={preview === "aligned" ? result.visualizations.aligned_pair : preview === "matches" ? result.visualizations.sift_ransac : preview === "heatmap" ? result.visualizations.change_heatmap : result.visualizations.body_parts} alt="ภาพหลักฐาน"/><figcaption>{preview === "aligned" ? `ภาพที่ใช้วิเคราะห์ — ${evidenceTransformLabel(result.evidence)}` : preview === "matches" ? "เส้นสีเขียวคือจุดที่ SIFT พบและ RANSAC ยืนยันตำแหน่งแล้ว" : preview === "heatmap" ? "สีร้อนคือบริเวณที่เปลี่ยนหลังจัดแนว สีมืดคือพื้นที่นอกขอบเขตเปรียบเทียบ" : "สีที่ระบายคือบริเวณอวัยวะที่โมเดลตรวจพบ"}</figcaption></figure> : <figure onClick={event => event.stopPropagation()}><img src={preview === "a" ? firstUrl : secondUrl} alt={`ภาพ ${preview.toUpperCase()}`}/><figcaption>ภาพ {preview.toUpperCase()} — {preview === "a" ? first?.name : second?.name}</figcaption></figure>}</div>}
       </div>;
     })()}
   </section>;

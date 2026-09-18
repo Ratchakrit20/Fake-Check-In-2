@@ -70,9 +70,6 @@ class PairEvidence:
     blur_variance_b: float = 0.0
     blurred_crop_suspected: bool = False
     whole_image_fallback_used: bool = False
-    person_mask_used: bool = False
-    person_detected_a: bool = False
-    person_detected_b: bool = False
 
 
 class RelationshipResult(BaseModel):

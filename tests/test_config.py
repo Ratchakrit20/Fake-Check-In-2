@@ -16,8 +16,6 @@ def test_default_config_is_valid():
     assert settings.embedding.provider == "sscd"
     assert len(settings.embedding.model_sha256) == 64
     assert settings.vector_search.top_k == 30
-    assert settings.person_segmentation.model_path.name == "yolo26s-seg.pt"
-    assert settings.person_segmentation.confidence == 0.35
 
 
 def test_invalid_threshold_order_fails_fast():

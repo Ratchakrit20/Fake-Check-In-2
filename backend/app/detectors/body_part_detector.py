@@ -59,6 +59,15 @@ class BodyPartDetector:
         scale = min(1.0, self.sift_max_dimension / max(height, width))
         return round(height * scale), round(width * scale)
 
+    @staticmethod
+    def _background_exclusion(mask: np.ndarray) -> np.ndarray:
+        """Keep body-boundary keypoints from masquerading as background evidence."""
+        height, width = mask.shape
+        radius = max(5, min(31, round(min(height, width) * 0.015)))
+        kernel_size = radius * 2 + 1
+        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (kernel_size, kernel_size))
+        return cv2.dilate(mask.astype(np.uint8), kernel, iterations=1).astype(bool)
+
     def segment_many(self, images: list[Image.Image]) -> list[dict[str, np.ndarray]]:
         keys = [self._key(image) for image in images]
         output: list[dict[str, np.ndarray] | None] = []
@@ -117,7 +126,6 @@ class BodyPartDetector:
         second: Image.Image,
         matches: SiftResult,
         ransac: RansacResult,
-        person_masks: tuple[np.ndarray, np.ndarray] | None = None,
     ) -> tuple[bool, bool, bool, dict[str, int], RansacResult, RansacResult]:
         masks_a, masks_b = self.segment_many([first, second])
         labels = set(self.config.identity_classes) | set(self.config.reuse_classes)
@@ -131,22 +139,10 @@ class BodyPartDetector:
                     union |= mask
             return union
 
-        organ_foreground_a = union_mask(masks_a, matches.image_size_a)
-        organ_foreground_b = union_mask(masks_b, matches.image_size_b)
-        # Person segmentation complements the organ mask for the coarse
-        # foreground/background split. A partially detected person must not
-        # erase valid limbs already found by organ.pt.
-        if person_masks is not None and person_masks[0].any() and person_masks[1].any():
-            person_foreground_a = cv2.resize(
-                person_masks[0].astype(np.uint8), matches.image_size_a, interpolation=cv2.INTER_NEAREST
-            ).astype(bool)
-            person_foreground_b = cv2.resize(
-                person_masks[1].astype(np.uint8), matches.image_size_b, interpolation=cv2.INTER_NEAREST
-            ).astype(bool)
-            foreground_a = person_foreground_a | organ_foreground_a
-            foreground_b = person_foreground_b | organ_foreground_b
-        else:
-            foreground_a, foreground_b = organ_foreground_a, organ_foreground_b
+        foreground_a = union_mask(masks_a, matches.image_size_a)
+        foreground_b = union_mask(masks_b, matches.image_size_b)
+        background_exclusion_a = self._background_exclusion(foreground_a)
+        background_exclusion_b = self._background_exclusion(foreground_b)
 
         def inside(mask: np.ndarray, point: np.ndarray) -> bool:
             x, y = np.rint(point).astype(int)
@@ -157,7 +153,9 @@ class BodyPartDetector:
             in_a, in_b = inside(foreground_a, point_a), inside(foreground_b, point_b)
             if in_a and in_b:
                 foreground_indexes.append(index)
-            elif not in_a and not in_b:
+            outside_person_margin_a = not inside(background_exclusion_a, point_a)
+            outside_person_margin_b = not inside(background_exclusion_b, point_b)
+            if not in_a and not in_b and outside_person_margin_a and outside_person_margin_b:
                 background_indexes.append(index)
 
         def subset(indexes: list[int]) -> SiftResult:
@@ -188,8 +186,12 @@ class BodyPartDetector:
         foreground_ransac.coverage_a = mask_coverage(foreground_matches.points_a, foreground_ransac.inlier_mask, foreground_a)
         foreground_ransac.coverage_b = mask_coverage(foreground_matches.points_b, foreground_ransac.inlier_mask, foreground_b)
         foreground_ransac.min_coverage = min(foreground_ransac.coverage_a, foreground_ransac.coverage_b)
-        background_ransac.coverage_a = mask_coverage(background_matches.points_a, background_ransac.inlier_mask, ~foreground_a)
-        background_ransac.coverage_b = mask_coverage(background_matches.points_b, background_ransac.inlier_mask, ~foreground_b)
+        background_ransac.coverage_a = mask_coverage(
+            background_matches.points_a, background_ransac.inlier_mask, ~background_exclusion_a
+        )
+        background_ransac.coverage_b = mask_coverage(
+            background_matches.points_b, background_ransac.inlier_mask, ~background_exclusion_b
+        )
         background_ransac.min_coverage = min(background_ransac.coverage_a, background_ransac.coverage_b)
 
         counts: dict[str, int] = {}

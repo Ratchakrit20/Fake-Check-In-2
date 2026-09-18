@@ -21,7 +21,7 @@ This project prefers permissive open-source dependencies suitable for commercial
 | PyTorch | Model inference | BSD-3-Clause |
 | torchvision | Image preprocessing | BSD-3-Clause |
 | SSCD code and pretrained weights | Image copy-detection descriptors | MIT |
-| Ultralytics | Person and body-part segmentation model runtime | AGPL-3.0 (review deployment obligations; replace with ONNX Runtime when required) |
+| Ultralytics | Body-part segmentation model runtime | AGPL-3.0 (review deployment obligations; replace with ONNX Runtime when required) |
 | Celery | Background jobs | BSD-3-Clause |
 | Redis | Queue server | RSALv2 / SSPLv1 (Redis 7 image; review distribution terms) |
 | PostgreSQL | Database | PostgreSQL License |
