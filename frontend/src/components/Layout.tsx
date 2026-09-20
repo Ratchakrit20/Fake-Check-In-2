@@ -5,7 +5,7 @@ const items = [
   ["/", "ภาพรวม", LayoutDashboard],
   ["/compare", "เปรียบเทียบภาพ", ScanSearch],
   ["/batch", "วิเคราะห์หลายภาพ", Images],
-  ["/groups", "กลุ่มภาพสัมพันธ์", Layers3],
+  ["/groups", "กลุ่มภาพที่ใช้ซ้ำ", Layers3],
   ["/settings", "การตั้งค่า", Settings],
 ] as const;
 
@@ -19,4 +19,3 @@ export function Layout() {
     <main><Outlet /></main>
   </div>;
 }
-

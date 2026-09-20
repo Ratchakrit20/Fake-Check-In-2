@@ -110,6 +110,12 @@ class PairAnalysisService:
             embedding_similarity = float(np.dot(vector_a, vector_b) / max(np.linalg.norm(vector_a) * np.linalg.norm(vector_b), 1e-12))
         body_gate, body_suspected, similar_person_only, body_part_inliers = False, False, False, {}
         foreground_ransac, background_ransac = RansacResult(), RansacResult()
+        masks_a: dict[str, np.ndarray] = {}
+        masks_b: dict[str, np.ndarray] = {}
+        heatmap_image: str | None = None
+        heatmap_foreground_change: float | None = None
+        heatmap_background_change: float | None = None
+        heatmap_scene_change_support = False
         geometry_is_credible = (
             best_sift.good_match_count >= self.settings.sift.min_good_matches
             and best_ransac.inlier_count >= 4
@@ -117,6 +123,51 @@ class PairAnalysisService:
         if self.body_parts is not None and geometry_is_credible:
             body_gate, body_suspected, similar_person_only, body_part_inliers, foreground_ransac, background_ransac = self.body_parts.verify_matches(
                 first, verification_second, best_sift, best_ransac
+            )
+            masks_a, masks_b = self.body_parts.segment_many([first, verification_second])
+            foreground_mask_a = np.zeros((best_sift.image_size_a[1], best_sift.image_size_a[0]), dtype=bool)
+            foreground_mask_b = np.zeros((best_sift.image_size_b[1], best_sift.image_size_b[0]), dtype=bool)
+            for label in set(self.settings.body_parts.identity_classes) | set(self.settings.body_parts.reuse_classes):
+                organ_mask_a, organ_mask_b = masks_a.get(label), masks_b.get(label)
+                if organ_mask_a is not None:
+                    foreground_mask_a |= organ_mask_a
+                if organ_mask_b is not None:
+                    foreground_mask_b |= organ_mask_b
+            foreground_alignment_is_reliable = (
+                foreground_ransac.homography_found
+                and foreground_ransac.inlier_count >= self.settings.ransac.min_inliers
+                and foreground_ransac.inlier_ratio >= self.settings.ransac.min_inlier_ratio
+            )
+            whole_alignment_is_reliable = (
+                best_ransac.homography_found
+                and best_ransac.inlier_count >= self.settings.ransac.min_inliers
+                and best_ransac.inlier_ratio >= self.settings.ransac.min_inlier_ratio
+            )
+            heatmap_alignment = (
+                foreground_ransac
+                if foreground_alignment_is_reliable
+                else best_ransac if whole_alignment_is_reliable else RansacResult()
+            )
+            heatmap_image, heatmap_foreground_change, heatmap_background_change = render_change_heatmap(
+                first,
+                verification_second,
+                best_sift,
+                heatmap_alignment,
+                foreground_mask_a,
+                foreground_mask_b,
+                include_image=include_visualizations,
+            )
+            heatmap_scene_change_support = (
+                foreground_alignment_is_reliable
+                and heatmap_foreground_change is not None
+                and heatmap_background_change is not None
+                and heatmap_foreground_change <= self.settings.relationship.heatmap_max_foreground_change
+                and heatmap_background_change >= self.settings.relationship.heatmap_min_background_change
+                and heatmap_background_change - heatmap_foreground_change
+                >= self.settings.relationship.heatmap_min_change_gap
+                and embedding_similarity is not None
+                and embedding_similarity >= self.settings.relationship.background_replaced_min_embedding_similarity
+                and (body_gate or body_suspected)
             )
         foreground_verified = (
             body_gate
@@ -147,7 +198,7 @@ class PairAnalysisService:
         )
         scene_change_suspected = (
             transform == "original"
-            and (foreground_verified or foreground_source_reuse)
+            and (foreground_verified or foreground_source_reuse or heatmap_scene_change_support)
             and not background_verified
             and normal_hash_distance > self.settings.phash.max_hamming_distance
         )
@@ -229,6 +280,10 @@ class PairAnalysisService:
             blur_variance_b=round(blur_variance_b, 2),
             blurred_crop_suspected=blurred_crop_suspected,
             whole_image_fallback_used=whole_image_fallback,
+            heatmap_foreground_change=heatmap_foreground_change,
+            heatmap_background_change=heatmap_background_change,
+            heatmap_scene_change_support=heatmap_scene_change_support,
+            heatmap_used_for_decision=heatmap_scene_change_support,
         )
         result = self.scorer.score(evidence)
         if include_visualizations:
@@ -246,44 +301,9 @@ class PairAnalysisService:
             if match_image:
                 result.visualizations["sift_ransac"] = match_image
             if self.body_parts is not None and geometry_is_credible:
-                masks_a, masks_b = self.body_parts.segment_many([first, verification_second])
                 mask_image = render_body_masks(first, verification_second, masks_a, masks_b)
                 if mask_image:
                     result.visualizations["body_parts"] = mask_image
-                foreground_mask_a = np.zeros((best_sift.image_size_a[1], best_sift.image_size_a[0]), dtype=bool)
-                foreground_mask_b = np.zeros((best_sift.image_size_b[1], best_sift.image_size_b[0]), dtype=bool)
-                for label in set(self.settings.body_parts.identity_classes) | set(self.settings.body_parts.reuse_classes):
-                    organ_mask_a, organ_mask_b = masks_a.get(label), masks_b.get(label)
-                    if organ_mask_a is not None:
-                        foreground_mask_a |= organ_mask_a
-                    if organ_mask_b is not None:
-                        foreground_mask_b |= organ_mask_b
-                foreground_alignment_is_reliable = (
-                    foreground_ransac.homography_found
-                    and foreground_ransac.inlier_count >= self.settings.ransac.min_inliers
-                    and foreground_ransac.inlier_ratio >= self.settings.ransac.min_inlier_ratio
-                )
-                whole_alignment_is_reliable = (
-                    best_ransac.homography_found
-                    and best_ransac.inlier_count >= self.settings.ransac.min_inliers
-                    and best_ransac.inlier_ratio >= self.settings.ransac.min_inlier_ratio
-                )
-                heatmap_alignment = (
-                    foreground_ransac
-                    if foreground_alignment_is_reliable
-                    else best_ransac if whole_alignment_is_reliable else RansacResult()
-                )
-                heatmap, foreground_change, background_change = render_change_heatmap(
-                    first,
-                    verification_second,
-                    best_sift,
-                    heatmap_alignment,
-                    foreground_mask_a,
-                    foreground_mask_b,
-                )
-                if heatmap:
-                    result.visualizations["change_heatmap"] = heatmap
-                    result.evidence["heatmap_foreground_change"] = foreground_change
-                    result.evidence["heatmap_background_change"] = background_change
-                    result.evidence["heatmap_used_for_decision"] = False
+                if heatmap_image:
+                    result.visualizations["change_heatmap"] = heatmap_image
         return result

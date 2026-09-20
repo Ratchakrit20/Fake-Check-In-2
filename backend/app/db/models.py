@@ -73,6 +73,9 @@ class AnalysisJob(Base):
     processed: Mapped[int] = mapped_column(Integer, default=0)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    duration_seconds: Mapped[float | None] = mapped_column(Float, nullable=True)
 
 
 class AnalysisJobItem(Base):

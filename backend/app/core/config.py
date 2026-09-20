@@ -146,6 +146,9 @@ class RelationshipConfig(BaseModel):
     blurred_whole_min_inlier_ratio: float = Field(gt=0, le=1)
     blurred_whole_min_coverage: float = Field(gt=0, le=1)
     blurred_whole_strong_inlier_ratio: float = Field(gt=0, le=1)
+    heatmap_max_foreground_change: float = Field(default=0.35, ge=0, le=1)
+    heatmap_min_background_change: float = Field(default=0.45, ge=0, le=1)
+    heatmap_min_change_gap: float = Field(default=0.20, ge=0, le=1)
     weights: RelationshipWeights
 
     @model_validator(mode="after")

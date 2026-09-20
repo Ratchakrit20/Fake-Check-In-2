@@ -150,3 +150,32 @@ def test_verified_same_location_is_grouped_for_review():
 
     assert result.classification == RelationClassification.SAME_SCENE_NEW_CAPTURE
     assert result.score >= .65
+
+
+def test_heatmap_strengthens_verified_scene_change_but_not_by_itself():
+    supported = PairEvidence(
+        phash_distance=30,
+        embedding_similarity=.55,
+        sift_good_matches=35,
+        sift_reference_features=800,
+        ransac_inliers=24,
+        ransac_inlier_ratio=.48,
+        scene_change_suspected=True,
+        heatmap_foreground_change=.18,
+        heatmap_background_change=.72,
+        heatmap_scene_change_support=True,
+        heatmap_used_for_decision=True,
+    )
+    supported_result = scorer().score(supported)
+    assert supported_result.classification == RelationClassification.BACKGROUND_REPLACED
+    assert supported_result.score >= .76
+
+    heatmap_only = PairEvidence(
+        heatmap_foreground_change=.10,
+        heatmap_background_change=.90,
+        heatmap_scene_change_support=True,
+        heatmap_used_for_decision=True,
+    )
+    heatmap_only_result = scorer().score(heatmap_only)
+    assert heatmap_only_result.classification == RelationClassification.UNRELATED
+    assert heatmap_only_result.score < .65

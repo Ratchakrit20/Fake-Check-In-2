@@ -16,6 +16,7 @@ This project prefers permissive open-source dependencies suitable for commercial
 | Pillow | Image decoding | MIT-CMU |
 | ImageHash | Perceptual hashing | BSD-2-Clause |
 | NumPy | Numerical operations | BSD-3-Clause |
+| XlsxWriter | Excel report generation | BSD-2-Clause |
 | OpenCV | SIFT, matching, RANSAC | Apache-2.0 |
 | FAISS | Vector search | MIT |
 | PyTorch | Model inference | BSD-3-Clause |

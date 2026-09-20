@@ -70,6 +70,10 @@ class PairEvidence:
     blur_variance_b: float = 0.0
     blurred_crop_suspected: bool = False
     whole_image_fallback_used: bool = False
+    heatmap_foreground_change: float | None = None
+    heatmap_background_change: float | None = None
+    heatmap_scene_change_support: bool = False
+    heatmap_used_for_decision: bool = False
 
 
 class RelationshipResult(BaseModel):

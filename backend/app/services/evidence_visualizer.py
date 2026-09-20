@@ -107,8 +107,9 @@ def render_change_heatmap(
     alignment: RansacResult,
     foreground_mask_a: np.ndarray,
     foreground_mask_b: np.ndarray,
+    include_image: bool = True,
 ) -> tuple[str | None, float | None, float | None]:
-    """Render alignment-aware pixel changes for diagnostics, never verdicts."""
+    """Measure aligned pixel changes and optionally render the diagnostic image."""
     if alignment.transform_matrix is None or not alignment.homography_found:
         return None, None, None
     width_a, height_a = matches.image_size_a
@@ -173,6 +174,8 @@ def render_change_heatmap(
         fraction(changed, valid, ~foreground_a),
         fraction(changed_reverse, valid_reverse, ~foreground_b),
     )
+    if not include_image:
+        return None, foreground_change, background_change
     heat_bgr = cv2.applyColorMap(changed, cv2.COLORMAP_JET)
     heat_rgb = cv2.cvtColor(heat_bgr, cv2.COLOR_BGR2RGB)
     overlay = image_a.copy()

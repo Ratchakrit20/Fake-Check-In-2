@@ -64,6 +64,13 @@ async def _set_job(job_id: str, status: JobStatus, processed: int | None = None,
         job = await session.get(AnalysisJob, job_id)
         if job is None:
             return
+        now = datetime.now(UTC).replace(tzinfo=None)
+        if status == JobStatus.EMBEDDING and job.started_at is None:
+            job.started_at = now
+        if status in {JobStatus.COMPLETED, JobStatus.FAILED}:
+            job.completed_at = now
+            started_at = job.started_at or job.created_at
+            job.duration_seconds = max(0.0, (now - started_at).total_seconds())
         job.status = status.value
         if processed is not None:
             job.processed = processed

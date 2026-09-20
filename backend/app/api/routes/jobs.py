@@ -15,6 +15,9 @@ def _job_response(job: AnalysisJob, items: list[AnalysisJobItem]) -> dict:
         "total": job.total,
         "processed": job.processed,
         "error": job.error,
+        "started_at": job.started_at.isoformat() if job.started_at else None,
+        "completed_at": job.completed_at.isoformat() if job.completed_at else None,
+        "duration_seconds": job.duration_seconds,
         "items": [{"image_id": item.image_id, "position": item.position, "status": item.status} for item in items],
     }
 

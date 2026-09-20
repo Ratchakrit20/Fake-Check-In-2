@@ -1,0 +1,41 @@
+Generated with built-in image_gen.
+
+PAIR INITIAL PROMPT
+Create one polished Thai educational presentation infographic, exact landscape 16:9, 3840x2160 preferred. Minimal white/ivory background, forest green and warm orange palette, crisp readable Thai sans serif. Title "การตรวจภาพแบบคู่: เก่า และ ใหม่". Two spacious horizontal rows of 6 cards with arrows, old row green heading "แบบเก่า • ตาม SYSTEM.md", new row orange heading "แบบใหม่ • ระบบปัจจุบัน". Each card MUST include a meaningful small photographic example/technical overlay, not just an icon. Use consistent example photos of the same adult field technician wearing green workwear at a utility cabinet, with a cropped/edited version as B. All photos illustrative, no invented accuracy metrics.
+OLD row cards in order:
+1 "SHA-256" caption "ตรวจไฟล์ซ้ำ" visual two JPG sheets and identical fingerprint; small bypass note "ตรงกัน → จบเป็นไฟล์ซ้ำ".
+2 "pHash" caption "ภาพรวม • กลับด้าน" visual photo and coarse mosaic mirrored comparison.
+3 "Segmentation" caption "แยกคนและอวัยวะ" visual technician with distinct head, torso, arm, leg masks.
+4 "SIFT + RANSAC" caption "จับคู่จุด • ยืนยันตำแหน่ง" visual paired photos with matched keypoints and geometric connecting lines.
+5 "Body + Pixel gates" caption "ตรวจร่างกายและพิกเซล" visual aligned person foreground comparison and different backgrounds with pixel-difference orange patches.
+6 "Classification" caption "ใช้กฎสรุปผล" visual photo pair with decision document.
+NEW row cards:
+1 "SHA-256" caption "ตรวจไฟล์ซ้ำ" same concept and bypass note.
+2 "pHash + Blur" caption "ภาพรวม • หมุน • กลับด้าน • เบลอ" visual original, rotated photo and blurred thumbnail.
+3 "SIFT + RANSAC" caption "ตรวจจุดก่อนแยกอวัยวะ" visual matched points on two photos.
+4 "SSCD" caption "วัดความคล้ายของภาพ" visual original and crop, each mapped to short colored feature bars, no fake score.
+5 "organ.pt" caption "แยกหลักฐานคนและฉาก" visual person body-part masks and separate background points; small note "เมื่อจุดจับคู่เพียงพอ".
+6 "Score + Rules" caption "รวมหลักฐานแล้วตัดสิน" visual merging evidence strips and result card.
+Below new row, a clearly separate small side branch FROM final decision to photo heatmap preview, labeled "Heatmap: แสดงความต่างหลังจัดแนว • ไม่ใช้ตัดสิน". Keep it not part of scoring input.
+Bottom two elegant concise comparison callouts: "เก่า: ความต่างพิกเซลมีส่วนในกฎตัดสิน" and "ใหม่: SSCD + หลักฐานเรขาคณิต + กฎ • Heatmap ใช้ประกอบการดู".
+Tiny footer "ภาพตัวอย่างประกอบ • ลำดับแบบย่อ • บางขั้นทำเฉพาะเมื่อเข้าเงื่อนไข".
+Professional executive visual, generous whitespace, aligned cards, short legible captions. Do not mention FAISS or batch mode. No claims of improved accuracy. Render all Thai carefully.
+
+PAIR CORRECTION PROMPT
+Edit this infographic keeping its exact 16:9 layout, all photographs, colors, cards, arrows and technical text unchanged EXCEPT these precise text fixes. In BOTH rightmost result panels (old Classification and new Score + Rules), remove all current result options including "คนเดียวกัน" and "คนละคน". Replace each result panel with exactly THREE readable lines: "เข้าข่ายใช้ภาพเดิม", "ควรตรวจสอบ", "ยังไม่เข้าข่าย". No face identity verdicts. Remove the decorative top-left handwritten slogan and top-right slogan and the bottom-right decorative slogan, leaving clean whitespace. Preserve the main title and all educational content and bottom footer. Do not add anything else.
+
+E2E PROMPT
+Create a polished Thai executive infographic, exact 16:9 landscape, minimalist ivory white background with forest green and orange accents, matching an educational image inspection presentation. Title "การตรวจหลายภาพแบบ E2E" subtitle "ค้นหาคู่ที่น่าสงสัย → ตรวจละเอียด → บันทึกและจัดกลุ่ม". Large readable Thai sans-serif, airy structured layout. Use realistic miniature photos of an adult field technician in green workwear beside utility cabinets, plus crops, rotated versions and different backgrounds to illustrate EVERY technology. No invented numerical accuracy, no identity recognition claims.
+Layout: top row 4 green numbered cards, left-to-right arrows. Bottom row 3 orange numbered cards left-to-right, with a clear elbow connector from top final card to bottom first card. Total seven stages.
+1 "รับภาพ + SHA-256 + pHash" caption "บันทึกไฟล์และลายนิ้วมือภาพ" visuals photo stack, identical-file fingerprint pair, coarse mosaic thumbnail.
+2 "SSCD" caption "แปลงภาพเป็นเวกเตอร์" visual original photo and crop mapped to colorful feature bars. small label "คำนวณเป็นชุด • ใช้ค่าที่บันทึกไว้ซ้ำ".
+3 "FAISS" caption "ค้นหาคู่ใกล้เคียงในคลัง" visual photo grid with two green highlighted similar candidates and a query thumbnail; text "ค้นได้ทั้งภาพชุดใหม่และภาพเก่า".
+4 "คัดเลือก Candidate" caption "เสริม SHA-256 และ pHash ภาพหมุน" visual duplicate photo pair and 90 degree rotated pair entering selected pair tray. small text "ข้ามคู่ซ้ำและเลขงานเดียวกันตามกติกา".
+5 "ตรวจแต่ละคู่" containing 3 clearly distinct mini examples and labels: "SHA-256: ไฟล์ตรงกันจบทันที" with identical files; "pHash: ภาพรวม หมุน กลับด้าน" with transformed pair; "SIFT + RANSAC: จุดและตำแหน่ง" with keypoints and connecting lines across paired photos. small note "ใช้คะแนน SSCD จากขั้นค้นหาเป็นหลัก".
+6 "organ.pt + กฎตัดสิน" caption "แยกหลักฐานบนคนและฉาก" large photo with colored body-part masks and separate background points, arrows to three clear result categories exactly "เข้าข่ายใช้ภาพเดิม", "ควรตรวจสอบ", "ยังไม่เข้าข่าย". small note "ตรวจอวัยวะเมื่อจุดจับคู่เพียงพอ".
+7 "บันทึกผล + จัดกลุ่ม" caption "แสดงคู่สัมพันธ์และกลุ่มภาพ" visual photo-thumbnail relationship graph and compact results table, no fabricated numbers.
+Bottom narrow two-column note band with clear text:
+"เลือกตรวจบางคู่ จึงอาจพลาดคู่ที่ไม่ผ่านการค้นหา"
+"งาน E2E ไม่สร้าง Heatmap ระหว่างประมวลผล"
+Tiny footer "ภาพตัวอย่างประกอบ • pHash เสริมภาพหมุนเฉพาะภาพที่โหลดเวกเตอร์ในงานนั้น"
+All labels accurate Thai, no extra slogans, no unrelated decorations. Keep each technology's photographic example visible and meaningful. This is an actual system pipeline, not an end-to-end neural network. No old batch workflow.

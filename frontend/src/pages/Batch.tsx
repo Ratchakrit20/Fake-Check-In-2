@@ -18,12 +18,12 @@ import {
 } from "../api/client";
 
 const stageNames: Record<string, string> = {
-  QUEUED: "กำลังเข้าคิว",
-  EMBEDDING: "กำลังสร้าง SSCD fingerprint",
-  SEARCHING: "กำลังค้นหาภาพที่คล้าย",
-  VERIFYING: "กำลังตรวจ SIFT, RANSAC และอวัยวะ",
-  COMPLETED: "วิเคราะห์เสร็จแล้ว",
-  FAILED: "การวิเคราะห์ล้มเหลว",
+  QUEUED: "กำลังวิเคราะห์รูปภาพ",
+  EMBEDDING: "กำลังวิเคราะห์รูปภาพ",
+  SEARCHING: "กำลังวิเคราะห์รูปภาพ",
+  VERIFYING: "กำลังวิเคราะห์รูปภาพ",
+  COMPLETED: "เสร็จสิ้น",
+  FAILED: "วิเคราะห์ไม่สำเร็จ",
 };
 
 export function Batch() {
@@ -57,14 +57,23 @@ export function Batch() {
     return () => window.clearInterval(timer);
   }, [job]);
   function choose(selected: FileList | null) {
-    setFiles(
-      selected
-        ? Array.from(selected).filter((file) => file.type.startsWith("image/"))
-        : [],
-    );
+    const chosen = selected ? Array.from(selected) : [];
+    const allowed = new Set(["image/jpeg", "image/png", "image/webp", "image/tiff", "image/bmp"]);
+    const valid = chosen.filter((file) => allowed.has(file.type) && file.size <= 20 * 1024 * 1024);
+    const totalSize = valid.reduce((sum, file) => sum + file.size, 0);
+    const withinLimits = chosen.length <= 1000 && totalSize <= 512 * 1024 * 1024;
+    setFiles(withinLimits ? valid : []);
     setJob(null);
     setGroups([]);
-    setError("");
+    setError(
+      chosen.length > 1000
+        ? "เลือกได้สูงสุดครั้งละ 1,000 ไฟล์"
+        : totalSize > 512 * 1024 * 1024
+          ? "ขนาดไฟล์รวมต้องไม่เกิน 512 MB"
+          : valid.length !== chosen.length
+            ? "มีไฟล์ที่ไม่รองรับหรือมีขนาดเกิน 20 MB จึงไม่ได้นำมาวิเคราะห์"
+            : "",
+    );
   }
   async function start() {
     if (!files.length) return;
@@ -130,21 +139,21 @@ export function Batch() {
         <p>
           {files.length
             ? `${(files.reduce((sum, file) => sum + file.size, 0) / 1048576).toFixed(1)} MB`
-            : "เลือกหลายไฟล์หรือเลือกทั้งโฟลเดอร์ได้"}
+            : "เลือกไฟล์หรือโฟลเดอร์ที่ต้องการตรวจ"}
         </p>
         <div className="picker-actions">
           <button onClick={() => fileInput.current?.click()}>
-            <Images size={18} /> เลือกหลายไฟล์
+            <Images size={18} /> อัปโหลดไฟล์
           </button>
           <button onClick={() => folderInput.current?.click()}>
-            <FolderOpen size={18} /> เลือกโฟลเดอร์
+            <FolderOpen size={18} /> อัปโหลดโฟลเดอร์
           </button>
         </div>
         <input
           ref={fileInput}
           hidden
           type="file"
-          accept="image/*"
+          accept=".jpg,.jpeg,.png,.webp,.tif,.tiff,.bmp"
           multiple
           onChange={(event) => choose(event.target.files)}
         />
@@ -152,11 +161,12 @@ export function Batch() {
           ref={folderInput}
           hidden
           type="file"
-          accept="image/*"
+          accept=".jpg,.jpeg,.png,.webp,.tif,.tiff,.bmp"
           multiple
           {...{ webkitdirectory: "", directory: "" }}
           onChange={(event) => choose(event.target.files)}
         />
+        <p className="upload-limits">รองรับ JPG, PNG, WebP, TIFF และ BMP · สูงสุด 1,000 ไฟล์ · ไม่เกิน 20 MB ต่อไฟล์ · รวมไม่เกิน 512 MB</p>
       </div>
       <div className="batch-run-actions">
         <button
@@ -193,9 +203,11 @@ export function Batch() {
             <div>
               <p className="eyebrow">สถานะงาน</p>
               <h2>{stageNames[job.status] ?? job.status}</h2>
-              <p className="working-note">
-                ระบบกำลังทำงานอยู่ แต่ละภาพอาจมี candidate หลายคู่
-              </p>
+              {job.status === "COMPLETED" ? (
+                <p className="working-note">สามารถดูรูปภาพที่ใช้ซ้ำได้ที่เมนูกลุ่มภาพที่ใช้ซ้ำ</p>
+              ) : job.status === "FAILED" ? (
+                <p className="working-note">กรุณาตรวจสอบการเชื่อมต่อแล้วลองอีกครั้ง</p>
+              ) : null}
             </div>
             <strong>
               {job.processed} / {job.total}
@@ -207,7 +219,7 @@ export function Batch() {
             <span style={{ width: `${progress}%` }} />
           </div>
           <small>{progress}%</small>
-          {job.error && <div className="error">{job.error}</div>}
+          {job.status === "FAILED" && <div className="error">ระบบไม่สามารถวิเคราะห์รูปภาพได้ กรุณาลองใหม่</div>}
         </div>
       )}
       {job?.status === "COMPLETED" && (
@@ -217,7 +229,7 @@ export function Batch() {
             <strong>{job.total}</strong>
           </div>
           <div className="panel">
-            <span>กลุ่มที่เกี่ยวข้อง</span>
+            <span>กลุ่มภาพที่ใช้ซ้ำ</span>
             <strong>{groups.length}</strong>
           </div>
           <div className="panel">

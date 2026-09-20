@@ -78,7 +78,7 @@ export async function reanalyzeLibrary(): Promise<{ job_id: string; status: stri
   return response.json();
 }
 
-export type BatchJob = { id: string; status: string; total: number; processed: number; error: string | null };
+export type BatchJob = { id: string; status: string; total: number; processed: number; error: string | null; started_at?: string | null; completed_at?: string | null; duration_seconds?: number | null };
 
 export async function getJob(jobId: string): Promise<BatchJob> {
   const response = await fetch(`${API}/jobs/${jobId}`);

@@ -18,7 +18,7 @@ embedding:
   version: facebookresearch/sscd-copy-detection:disc-mixup
   cache_dir: data/models
   model_path: data/models/sscd_disc_mixup.torchscript.pt
-  model_url: https://dl.fbaipublicfiles.com/sscd-copy-detection/sscd_disc_mixup.torchscript.pt
+  model_url: https://huggingface.co/m3/sscd-copy-detection/resolve/main/sscd_disc_mixup.torchscript.pt?download=true
   model_sha256: 9f26bd4c848cc19b73d2ae92eea6e04886f61a7b764ceb7a13aeee62e6a6db56
   input_size: 320
   device: auto
@@ -103,6 +103,11 @@ relationship:
   blurred_whole_min_inlier_ratio: 0.45
   blurred_whole_min_coverage: 0.08
   blurred_whole_strong_inlier_ratio: 0.75
+  # Heatmap is supporting evidence only. It is accepted only after reliable
+  # foreground alignment and never creates a relationship on its own.
+  heatmap_max_foreground_change: 0.35
+  heatmap_min_background_change: 0.45
+  heatmap_min_change_gap: 0.20
   weights:
     phash: 0.15
     embedding: 0.45

@@ -54,10 +54,12 @@ class RelationshipScorer:
             reasons.append("One reusable body region has strong matching evidence")
         elif evidence.similar_person_only:
             reasons.append("Head or neck features are similar, but body reuse is not verified")
+        if evidence.heatmap_scene_change_support:
+            reasons.append("Aligned person pixels remain stable while the background changes")
         denominator = sum(weight for _, weight in values)
         score = sum(value * weight for value, weight in values) / denominator if denominator else 0.0
         if evidence.scene_change_suspected:
-            score = max(score, 0.72)
+            score = max(score, 0.76 if evidence.heatmap_scene_change_support else 0.72)
             reasons.append("Strong geometrically verified partial reuse")
         elif evidence.repeated_checkin_suspected:
             score = max(score, 0.68)
