@@ -1,8 +1,8 @@
 import io
 from pathlib import Path
 from uuid import uuid4
-
-from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, UploadFile
+from typing import cast
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Request, HTTPException, UploadFile
 from PIL import Image
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -30,13 +30,21 @@ async def _ensure_no_active_job(session: AsyncSession) -> None:
 @router.post("", status_code=202)
 async def create_batch(
     background_tasks: BackgroundTasks,
-    files: list[UploadFile] = File(...),
+    request: Request,
     session: AsyncSession = Depends(get_session),
 ) -> dict:
     settings = get_settings()
+
+    form = await request.form(max_files=settings.app.max_upload_files)
+    files = cast(list[UploadFile], form.getlist("files"))
+
     await _ensure_no_active_job(session)
+
     if not files or len(files) > settings.app.max_upload_files:
-        raise HTTPException(status_code=422, detail=f"upload between 1 and {settings.app.max_upload_files} images")
+        raise HTTPException(
+            status_code=422,
+            detail=f"upload between 1 and {settings.app.max_upload_files} images",
+        )
     job = AnalysisJob(status="QUEUED", total=len(files), processed=0)
     session.add(job)
     await session.flush()

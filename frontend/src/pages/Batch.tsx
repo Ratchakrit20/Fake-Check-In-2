@@ -59,19 +59,19 @@ export function Batch() {
   function choose(selected: FileList | null) {
     const chosen = selected ? Array.from(selected) : [];
     const allowed = new Set(["image/jpeg", "image/png", "image/webp", "image/tiff", "image/bmp"]);
-    const valid = chosen.filter((file) => allowed.has(file.type) && file.size <= 20 * 1024 * 1024);
+    const valid = chosen.filter((file) => allowed.has(file.type) && file.size <= 5 * 1024 * 1024);
     const totalSize = valid.reduce((sum, file) => sum + file.size, 0);
-    const withinLimits = chosen.length <= 1000 && totalSize <= 512 * 1024 * 1024;
+    const withinLimits = chosen.length <= 5000 && totalSize <= 1000 * 1024 * 1024;
     setFiles(withinLimits ? valid : []);
     setJob(null);
     setGroups([]);
     setError(
-      chosen.length > 1000
-        ? "เลือกได้สูงสุดครั้งละ 1,000 ไฟล์"
-        : totalSize > 512 * 1024 * 1024
-          ? "ขนาดไฟล์รวมต้องไม่เกิน 512 MB"
+      chosen.length > 5000
+        ? "เลือกได้สูงสุดครั้งละ 5,000 ไฟล์"
+        : totalSize > 1000 * 1024 * 1024
+          ? "ขนาดไฟล์รวมต้องไม่เกิน 1000 MB"
           : valid.length !== chosen.length
-            ? "มีไฟล์ที่ไม่รองรับหรือมีขนาดเกิน 20 MB จึงไม่ได้นำมาวิเคราะห์"
+            ? "มีไฟล์ที่ไม่รองรับหรือมีขนาดเกิน 5 MB จึงไม่ได้นำมาวิเคราะห์"
             : "",
     );
   }
@@ -166,7 +166,7 @@ export function Batch() {
           {...{ webkitdirectory: "", directory: "" }}
           onChange={(event) => choose(event.target.files)}
         />
-        <p className="upload-limits">รองรับ JPG, PNG, WebP, TIFF และ BMP · สูงสุด 1,000 ไฟล์ · ไม่เกิน 20 MB ต่อไฟล์ · รวมไม่เกิน 512 MB</p>
+        <p className="upload-limits">รองรับ JPG, PNG, WebP, TIFF และ BMP · สูงสุด 5,000 ไฟล์ · ไม่เกิน 5 MB ต่อไฟล์ · รวมไม่เกิน 1,000 MB</p>
       </div>
       <div className="batch-run-actions">
         <button
