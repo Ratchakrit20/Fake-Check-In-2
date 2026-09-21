@@ -6,7 +6,7 @@ import {
   useRef,
   useState,
 } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { getGroups, ImageGroup, RelationshipSubgroup } from "../api/client";
 
 const classificationNames: Record<string, string> = {
@@ -97,6 +97,7 @@ function GroupContent({ group }: { group: ImageGroup }) {
 }
 
 export function Groups() {
+  const [searchParams, setSearchParams] = useSearchParams();
   const [groups, setGroups] = useState<ImageGroup[]>([]),
     [selected, setSelected] = useState<ImageGroup | null>(null);
   const [loading, setLoading] = useState(true),
@@ -109,12 +110,32 @@ export function Groups() {
     try {
       const response = await getGroups();
       setGroups(response.groups);
-      setSelected(
-        (current) =>
-          response.groups.find((group) => group.id === current?.id) ??
-          response.groups[0] ??
-          null,
-      );
+      const requestedBbid = searchParams.get("bbid");
+      const requestedGroupId = Number(searchParams.get("group"));
+      const requestedBbidGroup = requestedBbid
+        ? response.groups.find((group) =>
+            group.source_ids.includes(requestedBbid),
+          )
+        : undefined;
+      const nextSelected =
+        requestedBbidGroup ??
+        (Number.isInteger(requestedGroupId) && requestedGroupId > 0
+          ? response.groups.find((group) => group.id === requestedGroupId)
+          : undefined) ??
+        response.groups.find((group) => group.id === selected?.id) ??
+        response.groups[0] ??
+        null;
+      setSelected(nextSelected);
+      if (requestedBbid) {
+        if (requestedBbidGroup) {
+          setSearchParams(
+            { group: String(requestedBbidGroup.id) },
+            { replace: true },
+          );
+        } else {
+          setError(`ไม่พบกลุ่มภาพของ BBID ${requestedBbid}`);
+        }
+      }
     } catch (reason) {
       setError(
         reason instanceof Error ? reason.message : "โหลดข้อมูลไม่สำเร็จ",
@@ -174,7 +195,10 @@ export function Groups() {
               <button
                 className={selected?.id === group.id ? "active" : ""}
                 key={group.id}
-                onClick={() => setSelected(group)}
+                onClick={() => {
+                  setSelected(group);
+                  setSearchParams({ group: String(group.id) }, { replace: true });
+                }}
               >
                 <span>
                   กลุ่มที่ {group.id}

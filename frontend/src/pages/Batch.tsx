@@ -6,7 +6,7 @@ import {
   RotateCcw,
   UploadCloud,
 } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { CSSProperties, useEffect, useRef, useState } from "react";
 import {
   BatchJob,
   ImageGroup,
@@ -183,7 +183,7 @@ export function Batch() {
           ) : (
             <Play size={19} />
           )}{" "}
-          {uploading ? "กำลังเตรียมงาน..." : "วิเคราะห์ภาพที่เลือก"}
+          {uploading ? "กำลังเตรียมวิเคราะห์..." : "วิเคราะห์ภาพที่เลือก"}
         </button>
         <button
           className="reanalyze"
@@ -199,7 +199,7 @@ export function Batch() {
       {error && <div className="error">{error}</div>}
       {job && (
         <div className="job-progress panel">
-          <div className="job-line">
+          <div className="job-progress-overview">
             <div>
               <p className="eyebrow">สถานะงาน</p>
               <h2>{stageNames[job.status] ?? job.status}</h2>
@@ -209,9 +209,38 @@ export function Batch() {
                 <p className="working-note">กรุณาตรวจสอบการเชื่อมต่อแล้วลองอีกครั้ง</p>
               ) : null}
             </div>
-            <strong>
-              {job.processed} / {job.total}
-            </strong>
+            <div className="batch-progress-summary">
+              <div
+                className="batch-progress-donut"
+                role="progressbar"
+                aria-label="ความคืบหน้าการวิเคราะห์ภาพ"
+                aria-valuemin={0}
+                aria-valuemax={100}
+                aria-valuenow={progress}
+                style={{ "--progress": `${progress}%` } as CSSProperties}
+              >
+                <div>
+                  <strong>{progress}%</strong>
+                  <span>ประมวลผลแล้ว</span>
+                </div>
+              </div>
+              <div className="batch-progress-counts">
+                <span>
+                  ประมวลผลเสร็จแล้ว{" "}
+                  <strong>{job.processed.toLocaleString()} ภาพ</strong>
+                </span>
+                <span>
+                  เหลืออีก{" "}
+                  <strong>
+                    {Math.max(0, job.total - job.processed).toLocaleString()}
+                    {" ภาพ"}
+                  </strong>
+                </span>
+                <span>
+                  ทั้งหมด <strong>{job.total.toLocaleString()} ภาพ</strong>
+                </span>
+              </div>
+            </div>
           </div>
           <div
             className={`progress-track ${job.status !== "COMPLETED" && job.status !== "FAILED" ? "is-working" : ""}`}

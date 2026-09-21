@@ -21,6 +21,7 @@ from ..domain.enums import JobStatus
 from ..embeddings.sscd import SSCDEmbeddingProvider
 from ..storage.local_storage import LocalImageStorage
 from ..vector_store.faiss_store import FaissVectorStore
+from ..vector_store.phash_index import PerceptualHashIndex
 from .pair_analysis_service import PairAnalysisService
 from .source_filename import declared_source_id
 
@@ -106,6 +107,10 @@ async def process_batch_job(job_id: str, force: bool = False) -> None:
                 source_id = declared_source_id(record.original_filename)
                 if source_id is not None:
                     records_by_source.setdefault(source_id, []).append(record.id)
+            phash_index = PerceptualHashIndex.from_items(
+                ((record.id, record.phash) for record in all_records.values() if record.phash),
+                pair_service.phash.distance,
+            )
             record_paths = {
                 image_id: resolved
                 for image_id, record in all_records.items()
@@ -196,21 +201,22 @@ async def process_batch_job(job_id: str, force: bool = False) -> None:
                     pair_service.phash.calculate_single(current_image.transpose(Image.Transpose.ROTATE_90)),
                 ]
                 rotation_candidate_ids: set[str] = set()
-                for candidate in all_records.values():
+                for hash_value in rotation_hashes:
+                    rotation_candidate_ids.update(
+                        phash_index.search(hash_value, settings.phash.max_hamming_distance)
+                    )
+                for candidate_id in rotation_candidate_ids.copy():
+                    candidate = all_records.get(candidate_id)
+                    candidate_vector = vectors.get(candidate_id)
                     if (
-                        candidate.id == current.id
-                        or not candidate.phash
-                        or candidate.id not in vectors
+                        candidate is None
+                        or candidate_id == current.id
+                        or candidate_vector is None
                         or same_declared_source(current, candidate)
                     ):
+                        rotation_candidate_ids.discard(candidate_id)
                         continue
-                    rotation_distance = min(
-                        pair_service.phash.distance(hash_value, candidate.phash)
-                        for hash_value in rotation_hashes
-                    )
-                    if rotation_distance <= settings.phash.max_hamming_distance:
-                        candidate_scores.setdefault(candidate.id, float(np.dot(vector, vectors[candidate.id])))
-                        rotation_candidate_ids.add(candidate.id)
+                    candidate_scores.setdefault(candidate_id, float(np.dot(vector, candidate_vector)))
                 # Exact duplicates must never be lost because of top-k or an
                 # embedding threshold. They are distinct upload occurrences.
                 for duplicate_id in records_by_sha.get(current.sha256, []):
