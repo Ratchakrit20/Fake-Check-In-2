@@ -106,7 +106,7 @@ SHA-256 ไม่มี threshold ผลมีเพียงตรงหรื�
 | Environment | ค่าเริ่มต้น | หน้าที่ | เมื่อเพิ่ม | เมื่อลด |
 |---|---:|---|---|---|
 | `VECTOR_SEARCH__TOP_K` | 30 | จำนวน Candidate ต่อภาพ | ลดโอกาสพลาด แต่ใช้เวลาตรวจคู่มากขึ้น | เร็วขึ้น แต่อาจพลาด Candidate |
-| `PERFORMANCE__CANDIDATE_MIN_SIMILARITY` | 0.25 | คะแนน SSCD ขั้นต่ำก่อนตรวจละเอียด | ตัดภาพมากขึ้นและเร็วขึ้น แต่เสี่ยงพลาดภาพแก้ไขหนัก | ส่งภาพเข้า SIFT มากขึ้น ช้าลงแต่ recall สูงขึ้น |
+| `PERFORMANCE__CANDIDATE_MIN_SIMILARITY` | 0.40 | คะแนน SSCD ขั้นต่ำก่อนตรวจละเอียด | ตัดภาพมากขึ้นและเร็วขึ้น แต่เสี่ยงพลาดภาพแก้ไขหนัก | ส่งภาพเข้า SIFT มากขึ้น ช้าลงแต่ recall สูงขึ้น |
 | `RELATIONSHIP__BACKGROUND_REPLACED_MIN_EMBEDDING_SIMILARITY` | 0.45 | SSCD ขั้นต่ำของเคสเปลี่ยนฉาก | เข้มงวดขึ้น | ตรวจเจอง่ายขึ้นแต่ false positive เพิ่ม |
 
 ### SIFT
