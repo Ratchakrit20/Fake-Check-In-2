@@ -204,6 +204,7 @@ class PairAnalysisService:
         )
         recapture_suspected = (
             transform == "original"
+            and normal_hash_distance > self.settings.relationship.same_image_phash_max
             and best_ransac.inlier_count >= self.settings.relationship.recapture_min_inliers
             and best_ransac.inlier_ratio >= self.settings.relationship.recapture_min_inlier_ratio
             and best_ransac.min_coverage >= self.settings.relationship.recapture_min_coverage

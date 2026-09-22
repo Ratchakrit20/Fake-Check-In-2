@@ -71,8 +71,9 @@ function thaiConclusion(result: RelationshipResult): {
     };
   }
   if (
-    evidence.flip_detected === true ||
-    evidence.detected_transform === "horizontal_flip"
+    result.classification === "edited_or_cropped" &&
+    (evidence.flip_detected === true ||
+      evidence.detected_transform === "horizontal_flip")
   ) {
     return {
       title: "ภาพเดิมถูกกลับด้าน",
@@ -80,6 +81,7 @@ function thaiConclusion(result: RelationshipResult): {
     };
   }
   if (
+    result.classification === "edited_or_cropped" &&
     typeof evidence.rotation_degrees === "number" &&
     evidence.rotation_degrees !== 0
   ) {
@@ -88,14 +90,20 @@ function thaiConclusion(result: RelationshipResult): {
       detail: "พบจุดสำคัญชุดเดียวกันหลังหมุนภาพกลับมาจัดแนว",
     };
   }
-  if (evidence.recapture_suspected === true) {
+  if (
+    result.classification === "edited_or_cropped" &&
+    evidence.recapture_suspected === true
+  ) {
     return {
       title: "เข้าข่ายถ่ายภาพเดิมซ้ำผ่านหน้าจอหรืออุปกรณ์อีกเครื่อง",
       detail:
         "แม้สี ความคม และลายพิกเซลเปลี่ยนไป แต่โครงสร้างของภาพเดิมตรงกันเป็นบริเวณกว้าง",
     };
   }
-  if (evidence.blurred_crop_suspected === true) {
+  if (
+    result.classification === "edited_or_cropped" &&
+    evidence.blurred_crop_suspected === true
+  ) {
     return {
       title: "เข้าข่ายภาพเดิมที่ถูกทำให้เบลอหรือครอบตัด",
       detail:

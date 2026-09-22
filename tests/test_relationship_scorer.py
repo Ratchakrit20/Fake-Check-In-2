@@ -113,6 +113,41 @@ def test_repeated_checkin_is_reviewable_and_can_bridge_groups():
     assert result.score >= .65
 
 
+def test_same_image_takes_priority_over_recapture_and_repeated_checkin():
+    evidence = PairEvidence(
+        phash_distance=0,
+        embedding_similarity=1.0,
+        sift_good_matches=500,
+        sift_reference_features=500,
+        ransac_inliers=500,
+        ransac_inlier_ratio=1.0,
+        detected_transform="original",
+        recapture_suspected=True,
+        repeated_checkin_suspected=True,
+    )
+
+    result = scorer().score(evidence)
+
+    assert result.classification == RelationClassification.SAME_IMAGE
+
+
+def test_verified_transform_takes_priority_over_same_image():
+    evidence = PairEvidence(
+        phash_distance=0,
+        embedding_similarity=1.0,
+        sift_good_matches=100,
+        sift_reference_features=100,
+        ransac_inliers=100,
+        ransac_inlier_ratio=1.0,
+        flip_detected=True,
+        detected_transform="horizontal_flip",
+    )
+
+    result = scorer().score(evidence)
+
+    assert result.classification == RelationClassification.EDITED_OR_CROPPED
+
+
 def test_blurred_whole_image_fallback_is_an_edited_source():
     evidence = PairEvidence(
         phash_distance=30,

@@ -90,18 +90,22 @@ class RelationshipScorer:
             decision = RelationshipLevel.UNRELATED
         strong_geometry = evidence.ransac_inliers >= self.config.partial_reuse_min_inliers and evidence.ransac_inlier_ratio >= self.config.partial_reuse_min_inlier_ratio
         verified_transform = (evidence.flip_detected or evidence.rotation_degrees != 0) and score >= self.config.possible_threshold
-        if verified_transform or evidence.recapture_suspected or evidence.blurred_crop_suspected:
+        same_image = (
+            evidence.detected_transform == "original"
+            and evidence.phash_distance is not None
+            and evidence.phash_distance <= self.config.same_image_phash_max
+            and evidence.ransac_inlier_ratio >= self.config.same_image_min_inlier_ratio
+        )
+        if verified_transform:
+            classification = RelationClassification.EDITED_OR_CROPPED
+        elif same_image:
+            classification = RelationClassification.SAME_IMAGE
+        elif evidence.recapture_suspected or evidence.blurred_crop_suspected:
             classification = RelationClassification.EDITED_OR_CROPPED
         elif evidence.scene_change_suspected:
             classification = RelationClassification.BACKGROUND_REPLACED
         elif evidence.repeated_checkin_suspected:
             classification = RelationClassification.REPEATED_CHECKIN
-        elif (
-            evidence.phash_distance is not None
-            and evidence.phash_distance <= self.config.same_image_phash_max
-            and evidence.ransac_inlier_ratio >= self.config.same_image_min_inlier_ratio
-        ):
-            classification = RelationClassification.SAME_IMAGE
         elif evidence.body_reuse_gate and strong_geometry:
             classification = RelationClassification.EDITED_OR_CROPPED
         elif evidence.same_location_suspected:
