@@ -117,10 +117,7 @@ export function Dashboard() {
           <h1>ภาพรวมการวิเคราะห์ภาพซ้ำ</h1>
           {/* <p>ข้อมูลจะอัปเดตจากผลประมวลผลล่าสุดอัตโนมัติทุก 10 วินาที</p> */}
         </div>
-        <div className="live">
-          <span />
-          LIVE
-        </div>
+        
       </header>
       <div className="metric-grid">
         {cards.map(([label, value, Icon, color]) => (
