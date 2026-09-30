@@ -6,7 +6,7 @@ from ...core.config import get_settings
 from ...db.models import ImageRecord, PairwiseResult
 from ...db.session import get_session
 from ...services.relationship_graph_service import RelationshipGraphService
-from ...services.source_filename import declared_source_id
+from ...services.source_filename import declared_source_id, parse_source_reference
 
 router = APIRouter(prefix="/groups", tags=["groups"])
 
@@ -49,6 +49,10 @@ async def groups(session: AsyncSession = Depends(get_session)) -> dict:
                     {
                         "id": image_id,
                         "filename": image_map[image_id].original_filename,
+                        "job_number": image_map[image_id].source_job_number
+                        or (reference.job_number if (reference := parse_source_reference(image_map[image_id].original_filename)) else None),
+                        "checkin_date": image_map[image_id].source_checkin_date
+                        or (reference.checkin_date if (reference := parse_source_reference(image_map[image_id].original_filename)) else None),
                         "width": image_map[image_id].width,
                         "height": image_map[image_id].height,
                         "url": f"/api/v1/images/{image_id}/content",

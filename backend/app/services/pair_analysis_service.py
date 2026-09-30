@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import io
+import logging
+from time import perf_counter
 
 import numpy as np
 from PIL import Image, ImageOps
@@ -17,6 +19,8 @@ from ..domain.interfaces import EmbeddingProvider
 from ..domain.schemas import PairEvidence, RansacResult, RelationshipResult
 from .evidence_visualizer import render_aligned_pair, render_body_masks, render_change_heatmap, render_verified_matches
 from .relationship_scorer import RelationshipScorer
+
+logger = logging.getLogger(__name__)
 
 
 class PairAnalysisService:
@@ -43,12 +47,16 @@ class PairAnalysisService:
         embedding_similarity_override: float | None = None,
         include_visualizations: bool = False,
     ) -> RelationshipResult:
+        started = perf_counter()
+        logger.info("pair analysis: started (A=%d bytes, B=%d bytes)", len(first_content), len(second_content))
         exact = SHA256Detector.from_bytes(first_content) == SHA256Detector.from_bytes(second_content)
         if exact:
+            logger.info("pair analysis: exact duplicate (%.2fs)", perf_counter() - started)
             return self.scorer.score(PairEvidence(exact_duplicate=True))
         with Image.open(io.BytesIO(first_content)) as opened_a, Image.open(io.BytesIO(second_content)) as opened_b:
             first = ImageOps.exif_transpose(opened_a).convert("RGB")
             second = ImageOps.exif_transpose(opened_b).convert("RGB")
+        logger.info("pair analysis: decoded images %sx%s and %sx%s (%.2fs)", first.width, first.height, second.width, second.height, perf_counter() - started)
         hash_a, hash_b = self.phash.calculate(first), self.phash.calculate(second)
         blur_variance_a = ImageQualityDetector.blur_variance(first)
         blur_variance_b = ImageQualityDetector.blur_variance(second)
@@ -68,6 +76,7 @@ class PairAnalysisService:
         flip_hash_distance = transform_distances.get("horizontal_flip")
         normal_sift = self.sift.match(first, second)
         normal_ransac = self.ransac.verify(normal_sift)
+        logger.info("pair analysis: pHash + SIFT completed (%d good matches, %d inliers, %.2fs)", normal_sift.good_match_count, normal_ransac.inlier_count, perf_counter() - started)
         best_sift, best_ransac, transform = normal_sift, normal_ransac, "original"
         normal_geometry_passes = (
             normal_ransac.inlier_count >= self.settings.ransac.min_inliers
@@ -101,6 +110,7 @@ class PairAnalysisService:
         rotation_degrees = {"rotate_90": 90, "rotate_180": 180, "rotate_270": 270}.get(transform, 0)
         embedding_similarity = embedding_similarity_override
         if (embedding_similarity is None or rotation_degrees) and self.embedding_provider is not None:
+            logger.info("pair analysis: running embedding model")
             embed_many = getattr(self.embedding_provider, "embed_many", None)
             if embed_many is not None:
                 vector_a, vector_b = embed_many([first, verification_second])
@@ -108,6 +118,7 @@ class PairAnalysisService:
                 vector_a = self.embedding_provider.embed(first)
                 vector_b = self.embedding_provider.embed(verification_second)
             embedding_similarity = float(np.dot(vector_a, vector_b) / max(np.linalg.norm(vector_a) * np.linalg.norm(vector_b), 1e-12))
+            logger.info("pair analysis: embedding completed (%.2fs)", perf_counter() - started)
         body_gate, body_suspected, similar_person_only, body_part_inliers = False, False, False, {}
         foreground_ransac, background_ransac = RansacResult(), RansacResult()
         masks_a: dict[str, np.ndarray] = {}
@@ -121,6 +132,7 @@ class PairAnalysisService:
             and best_ransac.inlier_count >= 4
         )
         if self.body_parts is not None and geometry_is_credible:
+            logger.info("pair analysis: running body-part segmentation")
             body_gate, body_suspected, similar_person_only, body_part_inliers, foreground_ransac, background_ransac = self.body_parts.verify_matches(
                 first, verification_second, best_sift, best_ransac
             )
@@ -169,6 +181,7 @@ class PairAnalysisService:
                 and embedding_similarity >= self.settings.relationship.background_replaced_min_embedding_similarity
                 and (body_gate or body_suspected)
             )
+            logger.info("pair analysis: body-part segmentation completed (%.2fs)", perf_counter() - started)
         foreground_verified = (
             body_gate
             and foreground_ransac.inlier_count >= self.settings.body_parts.min_reuse_inliers
@@ -307,4 +320,10 @@ class PairAnalysisService:
                     result.visualizations["body_parts"] = mask_image
                 if heatmap_image:
                     result.visualizations["change_heatmap"] = heatmap_image
+        logger.info(
+            "pair analysis: completed classification=%s score=%.3f total=%.2fs",
+            result.classification,
+            result.score,
+            perf_counter() - started,
+        )
         return result

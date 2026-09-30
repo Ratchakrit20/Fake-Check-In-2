@@ -18,6 +18,22 @@ const classificationNames: Record<string, string> = {
   repeated_checkin: "พบคนและฉากเชื่อมโยงกัน",
 };
 
+function formatCheckinDate(value: string | null): string | null {
+  if (!value || !/^\d{8}$/.test(value)) return null;
+  return `${value.slice(0, 4)}-${value.slice(4, 6)}-${value.slice(6, 8)}`;
+}
+
+function ImageSourceMeta({ jobNumber, checkinDate }: { jobNumber: string | null; checkinDate: string | null }) {
+  const date = formatCheckinDate(checkinDate);
+  if (!jobNumber && !date) return null;
+  return (
+    <span className="image-source-meta">
+      {jobNumber && <span>Job {jobNumber}</span>}
+      {date && <span>Date {date}</span>}
+    </span>
+  );
+}
+
 function GroupContent({ group }: { group: ImageGroup }) {
   const navigate = useNavigate();
   const images = Array.from(
@@ -31,7 +47,8 @@ function GroupContent({ group }: { group: ImageGroup }) {
           <figure key={image.id}>
             <img src={image.url} alt={image.filename} loading="lazy" />
             <figcaption>
-              <strong title={image.filename}>{image.filename}</strong>
+              {/* <strong title={image.filename}>{image.filename}</strong> */}
+              <ImageSourceMeta jobNumber={image.job_number} checkinDate={image.checkin_date} />
               <small>
                 {image.width} × {image.height}
               </small>
@@ -61,16 +78,9 @@ function GroupContent({ group }: { group: ImageGroup }) {
             >
               <span className="relation-index">{index + 1}</span>
               <p>
-                <strong className="relation-name-first" title={first?.filename}>
-                  {first?.filename}
-                </strong>
-                <small>เชื่อมโยงกับ</small>
-                <strong
-                  className="relation-name-second"
-                  title={second?.filename}
-                >
-                  {second?.filename}
-                </strong>
+                {first && <ImageSourceMeta jobNumber={first.job_number} checkinDate={first.checkin_date} />}
+                <small>ใช้ภาพซ้ำกับ</small>
+                {second && <ImageSourceMeta jobNumber={second.job_number} checkinDate={second.checkin_date} />}
               </p>
               <em>
                 {classificationNames[relation.classification] ??

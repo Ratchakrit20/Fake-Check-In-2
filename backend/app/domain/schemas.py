@@ -9,6 +9,13 @@ from pydantic import BaseModel
 from .enums import RelationClassification, RelationshipLevel, ReuseVerdict
 
 
+class StoredComparisonRequest(BaseModel):
+    """References two evidence images already stored by this service."""
+
+    image_a_id: str
+    image_b_id: str
+
+
 @dataclass(slots=True)
 class SiftResult:
     keypoint_count_a: int = 0

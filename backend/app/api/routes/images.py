@@ -12,6 +12,7 @@ from ...db.session import get_session
 from ...detectors.perceptual_hash_detector import PerceptualHashDetector
 from ...detectors.sha256_detector import SHA256Detector
 from ...services.image_validation_service import ImageValidationService
+from ...services.source_filename import parse_source_reference
 from ...storage.local_storage import LocalImageStorage
 
 router = APIRouter(prefix="/images", tags=["images"])
@@ -38,9 +39,13 @@ async def upload_image(file: UploadFile = File(...), session: AsyncSession = Dep
 
     with Image.open(io.BytesIO(content)) as image:
         phash = PerceptualHashDetector(settings.phash.hash_size, settings.flip_detection.horizontal).calculate(image).original
+    original_filename = Path(file.filename or "image").name
+    source_reference = parse_source_reference(original_filename)
     record = ImageRecord(
         id=image_id,
-        original_filename=Path(file.filename or "image").name,
+        original_filename=original_filename,
+        source_job_number=source_reference.job_number if source_reference else None,
+        source_checkin_date=source_reference.checkin_date if source_reference else None,
         storage_path=str(storage_path),
         file_size=len(content),
         width=metadata.width,

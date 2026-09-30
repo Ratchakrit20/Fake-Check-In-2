@@ -22,6 +22,19 @@ export async function compareImages(first: File, second: File): Promise<Relation
   return response.json();
 }
 
+export async function compareStoredImages(imageAId: string, imageBId: string): Promise<RelationshipResult> {
+  const response = await fetch(`${API}/compare/stored`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ image_a_id: imageAId, image_b_id: imageBId }),
+  });
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ message: "ไม่สามารถวิเคราะห์ภาพจากคลังได้" }));
+    throw new Error(error.message ?? error.detail ?? "ไม่สามารถวิเคราะห์ภาพจากคลังได้");
+  }
+  return response.json();
+}
+
 export async function getStoredImageFile(imageId: string): Promise<File> {
   const safeId = encodeURIComponent(imageId);
   const [detailResponse, contentResponse] = await Promise.all([
@@ -97,7 +110,15 @@ export type RelationshipSubgroup = {
   source_ids: string[];
   image_ids: string[];
   size: number;
-  images: Array<{ id: string; filename: string; width: number; height: number; url: string }>;
+  images: Array<{
+    id: string;
+    filename: string;
+    job_number: string | null;
+    checkin_date: string | null;
+    width: number;
+    height: number;
+    url: string;
+  }>;
   relationships: Array<{ image_a_id: string; image_b_id: string; score: number; classification: string }>;
 };
 

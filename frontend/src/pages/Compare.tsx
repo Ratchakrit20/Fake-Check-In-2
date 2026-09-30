@@ -1,9 +1,9 @@
 import { Image as ImageIcon, LoaderCircle, ScanSearch, X } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import {
   compareImages,
-  getStoredImageFile,
+  compareStoredImages,
   RelationshipResult,
 } from "../api/client";
 import { FileDrop } from "../components/FileDrop";
@@ -367,80 +367,81 @@ export function Compare() {
   const [searchParams] = useSearchParams();
   const imageAId = searchParams.get("imageA"),
     imageBId = searchParams.get("imageB");
-  const loadedPair = useRef("");
   const [first, setFirst] = useState<File | null>(null),
     [second, setSecond] = useState<File | null>(null);
+  const [storedPair, setStoredPair] = useState<{ firstUrl: string; secondUrl: string } | null>(null);
   const [result, setResult] = useState<RelationshipResult | null>(null),
     [error, setError] = useState(""),
-    [loading, setLoading] = useState(false);
+    [loadingImages, setLoadingImages] = useState(false),
+    [analyzing, setAnalyzing] = useState(false);
   const [preview, setPreview] = useState<
     "a" | "b" | "compare" | "aligned" | "matches" | "body" | "heatmap" | null
   >(null);
   const firstUrl = useMemo(
-    () => (first ? URL.createObjectURL(first) : ""),
-    [first],
+    () => (first ? URL.createObjectURL(first) : storedPair?.firstUrl ?? ""),
+    [first, storedPair],
   );
   const secondUrl = useMemo(
-    () => (second ? URL.createObjectURL(second) : ""),
-    [second],
+    () => (second ? URL.createObjectURL(second) : storedPair?.secondUrl ?? ""),
+    [second, storedPair],
   );
   useEffect(
     () => () => {
-      if (firstUrl) URL.revokeObjectURL(firstUrl);
+      if (first && firstUrl) URL.revokeObjectURL(firstUrl);
     },
-    [firstUrl],
+    [first, firstUrl],
   );
   useEffect(
     () => () => {
-      if (secondUrl) URL.revokeObjectURL(secondUrl);
+      if (second && secondUrl) URL.revokeObjectURL(secondUrl);
     },
-    [secondUrl],
+    [second, secondUrl],
   );
   useEffect(() => {
     if (!imageAId || !imageBId) return;
-    const pairKey = `${imageAId}:${imageBId}`;
-    if (loadedPair.current === pairKey) return;
-    loadedPair.current = pairKey;
     let active = true;
-    setLoading(true);
+    setLoadingImages(true);
     setError("");
     setResult(null);
-    void Promise.all([
-      getStoredImageFile(imageAId),
-      getStoredImageFile(imageBId),
-    ])
-      .then(async ([storedFirst, storedSecond]) => {
-        if (!active) return;
-        setFirst(storedFirst);
-        setSecond(storedSecond);
-        const comparison = await compareImages(storedFirst, storedSecond);
-        if (active) setResult(comparison);
-      })
+    setFirst(null);
+    setSecond(null);
+    setStoredPair({
+      firstUrl: `/api/v1/images/${encodeURIComponent(imageAId)}/content`,
+      secondUrl: `/api/v1/images/${encodeURIComponent(imageBId)}/content`,
+    });
+    setLoadingImages(false);
+    setAnalyzing(true);
+    void compareStoredImages(imageAId, imageBId)
+      .then((comparison) => { if (active) setResult(comparison); })
       .catch((reason) => {
         if (active)
           setError(
-            reason instanceof Error ? reason.message : "โหลดคู่ภาพไม่สำเร็จ",
+            reason instanceof Error ? reason.message : "วิเคราะห์คู่ภาพไม่สำเร็จ",
           );
       })
       .finally(() => {
-        if (active) setLoading(false);
+        if (active) setAnalyzing(false);
       });
     return () => {
       active = false;
     };
   }, [imageAId, imageBId]);
-  async function run() {
-    if (!first || !second) return;
-    setLoading(true);
+  async function analyzePair(firstFile: File, secondFile: File, active = true) {
+    setAnalyzing(true);
     setError("");
     setResult(null);
     try {
-      setResult(await compareImages(first, second));
+      const comparison = await compareImages(firstFile, secondFile);
+      if (active) setResult(comparison);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "เกิดข้อผิดพลาด");
+      if (active) setError(err instanceof Error ? err.message : "เกิดข้อผิดพลาด");
     } finally {
-      setLoading(false);
+      if (active) setAnalyzing(false);
     }
+  }
+  async function run() {
+    if (!first || !second) return;
+    await analyzePair(first, second);
   }
   return (
     <section>
@@ -452,20 +453,20 @@ export function Compare() {
         </div>
       </header>
       <div className="compare-grid">
-        <FileDrop label="ภาพ A" file={first} onChange={setFirst} />
-        <FileDrop label="ภาพ B" file={second} onChange={setSecond} />
+        <FileDrop label="ภาพ A" file={first} storedUrl={storedPair?.firstUrl} onChange={(file) => { setStoredPair(null); setFirst(file); }} />
+        <FileDrop label="ภาพ B" file={second} storedUrl={storedPair?.secondUrl} onChange={(file) => { setStoredPair(null); setSecond(file); }} />
       </div>
       <button
         className="primary"
-        disabled={!first || !second || loading}
+        disabled={!first || !second || loadingImages || analyzing}
         onClick={run}
       >
-        {loading ? (
+        {loadingImages || analyzing ? (
           <LoaderCircle className="spin" size={19} />
         ) : (
           <ScanSearch size={19} />
         )}{" "}
-        {loading ? "กำลังวิเคราะห์..." : "เริ่มวิเคราะห์ความสัมพันธ์"}
+        {loadingImages ? "กำลังโหลดภาพ..." : analyzing ? "กำลังวิเคราะห์..." : "เริ่มวิเคราะห์ความสัมพันธ์"}
       </button>
       {error && <div className="error">{error}</div>}
       {result &&

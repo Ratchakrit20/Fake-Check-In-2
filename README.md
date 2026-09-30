@@ -56,30 +56,39 @@ conda activate fake-check-in
 python -m pip install -e ".[dev]"
 ```
 
-สร้างหน้าเว็บครั้งแรก หรือทุกครั้งหลังแก้ `frontend/src`:
+## การรันแบบแยก Frontend และ Backend (Development)
 
-```powershell
-cd frontend
-npm install
-npm run build
-cd ..
-```
+ระบบแยกเป็น 2 process และติดต่อกันผ่าน HTTP API เท่านั้น:
 
-ห้ามลบ `frontend/dist` หากต้องการให้ FastAPI แสดงหน้าเว็บ เพราะเป็นไฟล์ที่ Backend ใช้เสิร์ฟ React
+- **Backend API:** `http://127.0.0.1:8000` (เอกสาร API: `/docs`)
+- **Frontend:** `http://127.0.0.1:5173`
 
-## เริ่มระบบ
+เปิด terminal แรกที่ root ของโครงการ:
 
 ```powershell
 conda activate fake-check-in
 python -m backend.app.main
 ```
 
-เปิด:
+เปิด terminal ที่สอง:
 
-- หน้าเว็บ: <http://127.0.0.1:8000>
-- API documentation: <http://127.0.0.1:8000/docs>
+```powershell
+cd frontend
+npm install
+npm run dev
+npm run dev -- --host 0.0.0.0
+```
 
-หากหน้าเว็บยังเป็นเวอร์ชันเก่า ให้ build ใหม่แล้วกด `Ctrl + F5`
+Vite จะส่ง request ที่ขึ้นต้นด้วย `/api` ไปที่ Backend อัตโนมัติ จึงไม่ต้องตั้งค่า URL ใน browser และการแก้ไฟล์ frontend จะ refresh ให้ทันที
+
+## สร้าง Frontend สำหรับ Deploy
+
+```powershell
+cd frontend
+npm run build
+```
+
+โฟลเดอร์ `frontend/dist` เป็น static artifact สำหรับวางบน web server/CDN แยกต่างหาก; FastAPI จะไม่เสิร์ฟหน้าเว็บแล้ว
 
 ## ตั้งค่าโดยไม่แก้โค้ด
 

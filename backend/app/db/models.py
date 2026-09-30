@@ -19,6 +19,8 @@ class ImageRecord(Base):
     __tablename__ = "images"
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     original_filename: Mapped[str] = mapped_column(String(255))
+    source_job_number: Mapped[str | None] = mapped_column(String(10), nullable=True, index=True)
+    source_checkin_date: Mapped[str | None] = mapped_column(String(8), nullable=True, index=True)
     storage_path: Mapped[str] = mapped_column(Text)
     file_size: Mapped[int] = mapped_column(Integer)
     width: Mapped[int] = mapped_column(Integer)

@@ -6,9 +6,7 @@ from pathlib import Path
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from fastapi.staticfiles import StaticFiles
 from sqlalchemy import select
-from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from .api.router import api_router
 from .core.config import ROOT, get_settings
@@ -26,21 +24,6 @@ hardware = detect_hardware(
     settings.performance.opencv_threads,
     settings.embedding.batch_size,
 )
-
-
-class SPAStaticFiles(StaticFiles):
-    """Serve React routes through index.html while preserving real asset 404s."""
-
-    async def get_response(self, path: str, scope):
-        try:
-            response = await super().get_response(path, scope)
-        except StarletteHTTPException as exc:
-            if exc.status_code != 404 or Path(path).suffix:
-                raise
-            return await super().get_response("index.html", scope)
-        if response.status_code == 404 and not Path(path).suffix:
-            return await super().get_response("index.html", scope)
-        return response
 
 
 class RequestTooLargeError(Exception):
@@ -150,11 +133,6 @@ async def health() -> dict:
             "embedding_batch_size": hardware.embedding_batch_size,
         },
     }
-
-
-frontend_dist = ROOT / "frontend" / "dist"
-if frontend_dist.exists():
-    app.mount("/", SPAStaticFiles(directory=frontend_dist, html=True), name="frontend")
 
 
 if __name__ == "__main__":

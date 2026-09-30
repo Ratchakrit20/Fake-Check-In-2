@@ -163,6 +163,15 @@
   margin-top: 3px
 }
 
+.image-source-meta {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 3px 8px;
+  color: #147552;
+  font-size: 16px;
+  font-weight: 700
+}
+
 .relation-list {
   margin-top: 20px
 }
@@ -241,6 +250,12 @@
 .relation-list p small {
   flex: 0 0 auto;
   color: #8a96a6
+}
+
+.relation-list .image-source-meta {
+  flex: 0 1 auto;
+  color: #145f45;
+  font-size: 16px
 }
 
 .relation-list em {
