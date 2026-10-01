@@ -4,6 +4,7 @@ import { useSearchParams } from "react-router-dom";
 import {
   compareImages,
   compareStoredImages,
+  getStoredImageDetail,
   RelationshipResult,
 } from "../api/client";
 import { FileDrop } from "../components/FileDrop";
@@ -369,7 +370,12 @@ export function Compare() {
     imageBId = searchParams.get("imageB");
   const [first, setFirst] = useState<File | null>(null),
     [second, setSecond] = useState<File | null>(null);
-  const [storedPair, setStoredPair] = useState<{ firstUrl: string; secondUrl: string } | null>(null);
+  const [storedPair, setStoredPair] = useState<{
+    firstUrl: string;
+    secondUrl: string;
+    firstName: string;
+    secondName: string;
+  } | null>(null);
   const [result, setResult] = useState<RelationshipResult | null>(null),
     [error, setError] = useState(""),
     [loadingImages, setLoadingImages] = useState(false),
@@ -378,11 +384,12 @@ export function Compare() {
     "a" | "b" | "compare" | "aligned" | "matches" | "body" | "heatmap" | null
   >(null);
   const firstUrl = useMemo(
-    () => (first ? URL.createObjectURL(first) : storedPair?.firstUrl ?? ""),
+    () => (first ? URL.createObjectURL(first) : (storedPair?.firstUrl ?? "")),
     [first, storedPair],
   );
   const secondUrl = useMemo(
-    () => (second ? URL.createObjectURL(second) : storedPair?.secondUrl ?? ""),
+    () =>
+      second ? URL.createObjectURL(second) : (storedPair?.secondUrl ?? ""),
     [second, storedPair],
   );
   useEffect(
@@ -408,15 +415,34 @@ export function Compare() {
     setStoredPair({
       firstUrl: `/api/v1/images/${encodeURIComponent(imageAId)}/content`,
       secondUrl: `/api/v1/images/${encodeURIComponent(imageBId)}/content`,
+      firstName: "กำลังโหลดชื่อไฟล์...",
+      secondName: "กำลังโหลดชื่อไฟล์...",
     });
+    void Promise.all([getStoredImageDetail(imageAId), getStoredImageDetail(imageBId)])
+      .then(([imageA, imageB]) => {
+        if (active) {
+          setStoredPair((current) => current && {
+            ...current,
+            firstName: imageA.original_filename,
+            secondName: imageB.original_filename,
+          });
+        }
+      })
+      .catch(() => {
+        if (active) setError("โหลดชื่อไฟล์จากคลังไม่สำเร็จ");
+      });
     setLoadingImages(false);
     setAnalyzing(true);
     void compareStoredImages(imageAId, imageBId)
-      .then((comparison) => { if (active) setResult(comparison); })
+      .then((comparison) => {
+        if (active) setResult(comparison);
+      })
       .catch((reason) => {
         if (active)
           setError(
-            reason instanceof Error ? reason.message : "วิเคราะห์คู่ภาพไม่สำเร็จ",
+            reason instanceof Error
+              ? reason.message
+              : "วิเคราะห์คู่ภาพไม่สำเร็จ",
           );
       })
       .finally(() => {
@@ -434,7 +460,8 @@ export function Compare() {
       const comparison = await compareImages(firstFile, secondFile);
       if (active) setResult(comparison);
     } catch (err) {
-      if (active) setError(err instanceof Error ? err.message : "เกิดข้อผิดพลาด");
+      if (active)
+        setError(err instanceof Error ? err.message : "เกิดข้อผิดพลาด");
     } finally {
       if (active) setAnalyzing(false);
     }
@@ -453,8 +480,26 @@ export function Compare() {
         </div>
       </header>
       <div className="compare-grid">
-        <FileDrop label="ภาพ A" file={first} storedUrl={storedPair?.firstUrl} onChange={(file) => { setStoredPair(null); setFirst(file); }} />
-        <FileDrop label="ภาพ B" file={second} storedUrl={storedPair?.secondUrl} onChange={(file) => { setStoredPair(null); setSecond(file); }} />
+        <FileDrop
+          label="ภาพ A"
+          file={first}
+          storedUrl={storedPair?.firstUrl}
+          storedName={storedPair?.firstName}
+          onChange={(file) => {
+            setStoredPair(null);
+            setFirst(file);
+          }}
+        />
+        <FileDrop
+          label="ภาพ B"
+          file={second}
+          storedUrl={storedPair?.secondUrl}
+          storedName={storedPair?.firstName}
+          onChange={(file) => {
+            setStoredPair(null);
+            setSecond(file);
+          }}
+        />
       </div>
       <button
         className="primary"
@@ -466,7 +511,11 @@ export function Compare() {
         ) : (
           <ScanSearch size={19} />
         )}{" "}
-        {loadingImages ? "กำลังโหลดภาพ..." : analyzing ? "กำลังวิเคราะห์..." : "เริ่มวิเคราะห์ความสัมพันธ์"}
+        {loadingImages
+          ? "กำลังโหลดภาพ..."
+          : analyzing
+            ? "กำลังวิเคราะห์..."
+            : "เริ่มวิเคราะห์ความสัมพันธ์"}
       </button>
       {error && <div className="error">{error}</div>}
       {result &&
@@ -486,17 +535,6 @@ export function Compare() {
                 </div>
               </div>
               <div className="plain-result">
-                <div
-                  className="score-ring"
-                  style={
-                    {
-                      "--score": `${result.score * 100}%`,
-                    } as React.CSSProperties
-                  }
-                >
-                  <strong>{Math.round(result.score * 100)}</strong>
-                  <span>ความสัมพันธ์</span>
-                </div>
                 <div>
                   <p className="eyebrow">ประเภทผลการตรวจ</p>
                   <h3>

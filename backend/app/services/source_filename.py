@@ -19,6 +19,10 @@ class SourceReference:
     job_number: str
     checkin_date: str
 
+    @property
+    def submission_key(self) -> tuple[str, str]:
+        return (self.job_number, self.checkin_date)
+
 
 def parse_source_reference(filename: str) -> SourceReference | None:
     """Parse ``new_YYYYMMDD_*_home|splitter_<10-digit job>`` filenames."""

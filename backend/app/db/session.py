@@ -1,8 +1,10 @@
-from sqlalchemy import event, text
+from sqlalchemy import event, select, text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from ..core.config import get_settings
 from .models import Base
+from .models import ImageRecord
+from ..services.source_filename import parse_source_reference
 
 settings = get_settings()
 is_sqlite = settings.database.url.startswith("sqlite")
@@ -63,6 +65,16 @@ async def init_database() -> None:
         )
         await connection.execute(text("CREATE INDEX IF NOT EXISTS ix_images_source_job_number ON images (source_job_number)"))
         await connection.execute(text("CREATE INDEX IF NOT EXISTS ix_images_source_checkin_date ON images (source_checkin_date)"))
+
+    # Backfill existing libraries created before source metadata was persisted.
+    async with SessionFactory() as session:
+        records = list(await session.scalars(select(ImageRecord).where(ImageRecord.source_job_number.is_(None))))
+        for record in records:
+            reference = parse_source_reference(record.original_filename)
+            if reference is not None:
+                record.source_job_number = reference.job_number
+                record.source_checkin_date = reference.checkin_date
+        await session.commit()
 
 
 async def get_session():

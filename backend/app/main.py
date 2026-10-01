@@ -84,7 +84,7 @@ async def lifespan(_: FastAPI):
     async with SessionFactory() as session:
         interrupted = list(
             await session.scalars(
-                select(AnalysisJob).where(AnalysisJob.status.not_in(["COMPLETED", "FAILED"]))
+                select(AnalysisJob).where(AnalysisJob.status.not_in(["COMPLETED", "CANCELLED", "FAILED"]))
             )
         )
     recovery_tasks = [asyncio.create_task(asyncio.to_thread(run_batch_job, job.id)) for job in interrupted]

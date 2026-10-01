@@ -23,12 +23,14 @@ from ..storage.local_storage import LocalImageStorage
 from ..vector_store.faiss_store import FaissVectorStore
 from ..vector_store.phash_index import PerceptualHashIndex
 from .pair_analysis_service import PairAnalysisService
-from .source_filename import declared_source_id
+from .source_filename import parse_source_reference
 
 
-def same_declared_source(first: ImageRecord, second: ImageRecord) -> bool:
-    first_source = declared_source_id(first.original_filename)
-    return first_source is not None and first_source == declared_source_id(second.original_filename)
+def same_submission(first: ImageRecord, second: ImageRecord) -> bool:
+    """Skip only images from the same BBID on the same check-in date."""
+    first_reference = parse_source_reference(first.original_filename)
+    second_reference = parse_source_reference(second.original_filename)
+    return first_reference is not None and second_reference is not None and first_reference.submission_key == second_reference.submission_key
 
 
 @lru_cache
@@ -65,10 +67,15 @@ async def _set_job(job_id: str, status: JobStatus, processed: int | None = None,
         job = await session.get(AnalysisJob, job_id)
         if job is None:
             return
+        # The cancellation endpoint owns the terminal state. A worker which
+        # finishes its current CPU task afterwards must not turn it back into
+        # COMPLETED or FAILED.
+        if job.status == JobStatus.CANCELLED.value and status != JobStatus.CANCELLED:
+            return
         now = datetime.now(UTC).replace(tzinfo=None)
         if status == JobStatus.EMBEDDING and job.started_at is None:
             job.started_at = now
-        if status in {JobStatus.COMPLETED, JobStatus.FAILED}:
+        if status in {JobStatus.COMPLETED, JobStatus.CANCELLED, JobStatus.FAILED}:
             job.completed_at = now
             started_at = job.started_at or job.created_at
             job.duration_seconds = max(0.0, (now - started_at).total_seconds())
@@ -77,6 +84,13 @@ async def _set_job(job_id: str, status: JobStatus, processed: int | None = None,
             job.processed = processed
         job.error = error
         await session.commit()
+
+
+async def _cancel_requested(job_id: str) -> bool:
+    """Read the persisted cancellation flag between safe processing units."""
+    async with SessionFactory() as session:
+        job = await session.get(AnalysisJob, job_id)
+        return job is None or job.status == JobStatus.CANCELLED.value
 
 
 async def process_batch_job(job_id: str, force: bool = False) -> None:
@@ -92,6 +106,8 @@ async def process_batch_job(job_id: str, force: bool = False) -> None:
     provider, vector_store, pair_service = _components()
     storage = LocalImageStorage(settings.storage.root)
     try:
+        if await _cancel_requested(job_id):
+            return
         await _set_job(job_id, JobStatus.EMBEDDING, 0)
         async with SessionFactory() as session:
             items = list(
@@ -101,12 +117,8 @@ async def process_batch_job(job_id: str, force: bool = False) -> None:
             )
             all_records = {record.id: record for record in await session.scalars(select(ImageRecord))}
             records_by_sha: dict[str, list[str]] = {}
-            records_by_source: dict[str, list[str]] = {}
             for record in all_records.values():
                 records_by_sha.setdefault(record.sha256, []).append(record.id)
-                source_id = declared_source_id(record.original_filename)
-                if source_id is not None:
-                    records_by_source.setdefault(source_id, []).append(record.id)
             phash_index = PerceptualHashIndex.from_items(
                 ((record.id, record.phash) for record in all_records.values() if record.phash),
                 pair_service.phash.distance,
@@ -137,6 +149,8 @@ async def process_batch_job(job_id: str, force: bool = False) -> None:
             batch_size = profile.embedding_batch_size
             missing = unique_records_by_id(missing)
             for offset in range(0, len(missing), batch_size):
+                if await _cancel_requested(job_id):
+                    return
                 records_chunk = missing[offset : offset + batch_size]
                 images: list[Image.Image] = []
                 for record in records_chunk:
@@ -162,7 +176,7 @@ async def process_batch_job(job_id: str, force: bool = False) -> None:
             retained_rows: list[PairwiseResult] = []
             for row in existing_rows:
                 first, second = all_records.get(row.image_a_id), all_records.get(row.image_b_id)
-                if first is not None and second is not None and same_declared_source(first, second):
+                if first is not None and second is not None and same_submission(first, second):
                     await session.delete(row)
                 else:
                     retained_rows.append(row)
@@ -175,6 +189,8 @@ async def process_batch_job(job_id: str, force: bool = False) -> None:
         loop = asyncio.get_running_loop()
         with ThreadPoolExecutor(max_workers=profile.pair_workers, thread_name_prefix="pair-analysis") as executor:
             for position, item in enumerate(items, start=1):
+                if await _cancel_requested(job_id):
+                    return
                 current = all_records.get(item.image_id)
                 if current is None:
                     continue
@@ -185,9 +201,7 @@ async def process_batch_job(job_id: str, force: bool = False) -> None:
                 if current_path is None:
                     continue
                 current_bytes = current_path.read_bytes()
-                source_id = declared_source_id(current.original_filename)
-                same_source_count = len(records_by_source.get(source_id, [])) if source_id is not None else 0
-                candidates = vector_store.search(vector, settings.vector_search.top_k + max(0, same_source_count - 1))
+                candidates = vector_store.search(vector, settings.vector_search.top_k)
                 candidate_scores = {candidate_id: similarity for candidate_id, similarity in candidates}
                 # A 90/180/270-degree copy can rank poorly in SSCD. Cheap
                 # rotation-aware pHash retrieval keeps it from being lost
@@ -212,7 +226,7 @@ async def process_batch_job(job_id: str, force: bool = False) -> None:
                         candidate is None
                         or candidate_id == current.id
                         or candidate_vector is None
-                        or same_declared_source(current, candidate)
+                        or same_submission(current, candidate)
                     ):
                         rotation_candidate_ids.discard(candidate_id)
                         continue
@@ -236,12 +250,14 @@ async def process_batch_job(job_id: str, force: bool = False) -> None:
                     candidate_path = record_paths.get(candidate_id)
                     if candidate is None or candidate_path is None:
                         continue
-                    if same_declared_source(current, candidate):
+                    if same_submission(current, candidate):
                         continue
                     seen_pairs.add(pair)
                     work.append((pair, str(candidate_path), similarity))
 
                 for offset in range(0, len(work), settings.performance.pair_chunk_size):
+                    if await _cancel_requested(job_id):
+                        return
                     chunk = work[offset : offset + settings.performance.pair_chunk_size]
                     futures = [
                         loop.run_in_executor(
@@ -292,6 +308,8 @@ async def process_batch_job(job_id: str, force: bool = False) -> None:
                 await _set_job(job_id, JobStatus.VERIFYING, position)
         await _set_job(job_id, JobStatus.COMPLETED, len(items))
     except Exception as exc:  # noqa: BLE001 - job boundary must persist every failure
+        if await _cancel_requested(job_id):
+            return
         await _set_job(job_id, JobStatus.FAILED, error=str(exc))
 
 

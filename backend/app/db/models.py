@@ -88,3 +88,23 @@ class AnalysisJobItem(Base):
     position: Mapped[int] = mapped_column(Integer)
     status: Mapped[str] = mapped_column(String(30), default="QUEUED")
     __table_args__ = (UniqueConstraint("job_id", "position", name="uq_job_position"),)
+
+
+class ExportReport(Base):
+    __tablename__ = "export_reports"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    date_from: Mapped[str] = mapped_column(String(8))
+    date_to: Mapped[str] = mapped_column(String(8))
+    pdf_path: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class ExportReportImage(Base):
+    __tablename__ = "export_report_images"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    export_report_id: Mapped[str] = mapped_column(ForeignKey("export_reports.id", ondelete="CASCADE"), index=True)
+    image_id: Mapped[str] = mapped_column(ForeignKey("images.id", ondelete="RESTRICT"), index=True)
+    source_job_number: Mapped[str | None] = mapped_column(String(10), nullable=True, index=True)
+    source_checkin_date: Mapped[str | None] = mapped_column(String(8), nullable=True, index=True)
+    group_id_snapshot: Mapped[str] = mapped_column(String(64))
+    __table_args__ = (UniqueConstraint("export_report_id", "image_id", name="uq_export_report_image"),)

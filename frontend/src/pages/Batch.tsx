@@ -2,6 +2,7 @@ import {
   FolderOpen,
   Images,
   LoaderCircle,
+  Square,
   Play,
   RotateCcw,
   UploadCloud,
@@ -11,6 +12,7 @@ import {
   BatchJob,
   ImageGroup,
   createBatch,
+  cancelJob,
   getActiveJob,
   getGroups,
   getJob,
@@ -23,6 +25,7 @@ const stageNames: Record<string, string> = {
   SEARCHING: "กำลังวิเคราะห์รูปภาพ",
   VERIFYING: "กำลังวิเคราะห์รูปภาพ",
   COMPLETED: "เสร็จสิ้น",
+  CANCELLED: "หยุดการวิเคราะห์แล้ว",
   FAILED: "วิเคราะห์ไม่สำเร็จ",
 };
 
@@ -42,7 +45,7 @@ export function Batch() {
       .catch(() => undefined);
   }, []);
   useEffect(() => {
-    if (!job || ["COMPLETED", "FAILED"].includes(job.status)) return;
+    if (!job || ["COMPLETED", "CANCELLED", "FAILED"].includes(job.status)) return;
     const timer = window.setInterval(async () => {
       try {
         const next = await getJob(job.id);
@@ -117,9 +120,22 @@ export function Batch() {
       setUploading(false);
     }
   }
+  async function cancel() {
+    if (!job) return;
+    setUploading(true);
+    setError("");
+    try {
+      setJob(await cancelJob(job.id));
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "หยุดการวิเคราะห์ไม่สำเร็จ");
+    } finally {
+      setUploading(false);
+    }
+  }
   const progress = job
     ? Math.round((job.processed / Math.max(1, job.total)) * 100)
     : 0;
+  const isRunning = !!job && !["COMPLETED", "CANCELLED", "FAILED"].includes(job.status);
   return (
     <section>
       <header className="page-head">
@@ -142,10 +158,10 @@ export function Batch() {
             : "เลือกไฟล์หรือโฟลเดอร์ที่ต้องการตรวจ"}
         </p>
         <div className="picker-actions">
-          <button onClick={() => fileInput.current?.click()}>
+          <button disabled={isRunning} onClick={() => fileInput.current?.click()}>
             <Images size={18} /> อัปโหลดไฟล์
           </button>
-          <button onClick={() => folderInput.current?.click()}>
+          <button disabled={isRunning} onClick={() => folderInput.current?.click()}>
             <FolderOpen size={18} /> อัปโหลดโฟลเดอร์
           </button>
         </div>
@@ -174,7 +190,7 @@ export function Batch() {
           disabled={
             !files.length ||
             uploading ||
-            (!!job && !["COMPLETED", "FAILED"].includes(job.status))
+            isRunning
           }
           onClick={start}
         >
@@ -189,12 +205,17 @@ export function Batch() {
           className="reanalyze"
           disabled={
             uploading ||
-            (!!job && !["COMPLETED", "FAILED"].includes(job.status))
+            isRunning
           }
           onClick={reanalyze}
         >
           <RotateCcw size={18} /> วิเคราะห์ข้อมูลเดิมใหม่
         </button>
+        {isRunning && (
+          <button className="reanalyze cancel-analysis" disabled={uploading} onClick={cancel}>
+            <Square size={16} fill="currentColor" /> หยุดการวิเคราะห์
+          </button>
+        )}
       </div>
       {error && <div className="error">{error}</div>}
       {job && (
@@ -207,6 +228,8 @@ export function Batch() {
                 <p className="working-note">สามารถดูรูปภาพที่ใช้ซ้ำได้ที่เมนูกลุ่มภาพที่ใช้ซ้ำ</p>
               ) : job.status === "FAILED" ? (
                 <p className="working-note">กรุณาตรวจสอบการเชื่อมต่อแล้วลองอีกครั้ง</p>
+              ) : job.status === "CANCELLED" ? (
+                <p className="working-note">หยุดงานแล้ว สามารถเพิ่มรูปภาพและเริ่มวิเคราะห์รอบใหม่ได้</p>
               ) : null}
             </div>
             <div className="batch-progress-summary">
@@ -243,12 +266,13 @@ export function Batch() {
             </div>
           </div>
           <div
-            className={`progress-track ${job.status !== "COMPLETED" && job.status !== "FAILED" ? "is-working" : ""}`}
+            className={`progress-track ${!["COMPLETED", "CANCELLED", "FAILED"].includes(job.status) ? "is-working" : ""}`}
           >
             <span style={{ width: `${progress}%` }} />
           </div>
           <small>{progress}%</small>
           {job.status === "FAILED" && <div className="error">ระบบไม่สามารถวิเคราะห์รูปภาพได้ กรุณาลองใหม่</div>}
+          {job.status === "CANCELLED" && <div className="working-note">ผลที่วิเคราะห์เสร็จก่อนกดหยุดจะถูกเก็บไว้ แต่รายการที่เหลือจะไม่ถูกประมวลผลต่อ</div>}
         </div>
       )}
       {job?.status === "COMPLETED" && (

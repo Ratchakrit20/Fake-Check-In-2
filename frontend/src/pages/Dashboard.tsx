@@ -13,9 +13,13 @@ import {
   BatchJob,
   DashboardData,
   downloadDashboardReport,
+  ExportableBbid,
+  exportBbidsPdf,
   getActiveJob,
   getDashboard,
+  getExportableBbids,
 } from "../api/client";
+import { formatDisplayDate } from "../utils/date";
 
 const fallback: DashboardData = {
   total_images: 0,
@@ -62,6 +66,12 @@ export function Dashboard() {
   const navigate = useNavigate();
   const [data, setData] = useState(fallback);
   const [activeJob, setActiveJob] = useState<BatchJob | null>(null);
+  const [exportItems, setExportItems] = useState<ExportableBbid[]>([]);
+  const [selectedBbids, setSelectedBbids] = useState<string[]>([]);
+  const [exportSearch, setExportSearch] = useState("");
+  const [exporting, setExporting] = useState(false);
+  const [dateFrom, setDateFrom] = useState("2026-01-01");
+  const [dateTo, setDateTo] = useState("2026-12-31");
   const [totalImages, setTotalImages] = useState(() =>
     Number(localStorage.getItem("report-total-images") || 0),
   );
@@ -89,9 +99,34 @@ export function Dashboard() {
     };
   }, []);
   useEffect(() => {
+    const from = dateFrom.replaceAll("-", ""),
+      to = dateTo.replaceAll("-", "");
+    void getExportableBbids(from, to, exportSearch)
+      .then((response) => {
+        setExportItems(response.items);
+        setSelectedBbids((selected) =>
+          selected.filter((bbid) =>
+            response.items.some((item) => item.bbid === bbid),
+          ),
+        );
+      })
+      .catch(() => setExportItems([]));
+  }, [dateFrom, dateTo, exportSearch]);
+  useEffect(() => {
     localStorage.setItem("report-total-images", String(totalImages));
   }, [totalImages]);
   const safeTotal = Math.max(totalImages, data.images_in_system);
+  const visibleBbids = exportItems.map((item) => item.bbid);
+  const areAllVisibleSelected =
+    visibleBbids.length > 0 && visibleBbids.every((bbid) => selectedBbids.includes(bbid));
+
+  function toggleAllVisible() {
+    setSelectedBbids((selected) =>
+      areAllVisibleSelected
+        ? selected.filter((bbid) => !visibleBbids.includes(bbid))
+        : [...new Set([...selected, ...visibleBbids])],
+    );
+  }
   const cards = useMemo(
     () =>
       [
@@ -117,7 +152,6 @@ export function Dashboard() {
           <h1>ภาพรวมการวิเคราะห์ภาพซ้ำ</h1>
           {/* <p>ข้อมูลจะอัปเดตจากผลประมวลผลล่าสุดอัตโนมัติทุก 10 วินาที</p> */}
         </div>
-        
       </header>
       <div className="metric-grid">
         {cards.map(([label, value, Icon, color]) => (
@@ -260,7 +294,97 @@ export function Dashboard() {
           <div className="dashboard-empty">ยังไม่พบเลขงานที่ใช้ภาพซ้ำ</div>
         )}
       </section>
-      <div className="panel">
+      <section className="panel duplicate-job-panel export-panel">
+        <div className="panel-head">
+          <div>
+            <h2>Export รายงาน PDF</h2>
+            <p>เลือก BBID และช่วงวันที่ก่อนสร้างรายงานรวม</p>
+          </div>
+          <button
+            className="report-download"
+            disabled={!selectedBbids.length || exporting}
+            onClick={() => {
+              setExporting(true);
+              void exportBbidsPdf(
+                selectedBbids,
+                dateFrom.replaceAll("-", ""),
+                dateTo.replaceAll("-", ""),
+              ).finally(() => setExporting(false));
+            }}
+          >
+            {exporting
+              ? "กำลังสร้าง PDF..."
+              : `Export PDF (${selectedBbids.length})`}
+          </button>
+        </div>
+        <div className="export-controls">
+          <div className="export-filters">
+            <label>
+              <span>ตั้งแต่วันที่</span>
+              <input
+                type="date"
+                value={dateFrom}
+                onChange={(event) => setDateFrom(event.target.value)}
+              />
+            </label>
+            <span className="export-date-separator">ถึง</span>
+            <label>
+              <span>ถึงวันที่</span>
+              <input
+                type="date"
+                value={dateTo}
+                onChange={(event) => setDateTo(event.target.value)}
+              />
+            </label>
+            <label className="export-search">
+              <span>ค้นหา BBID</span>
+              <input
+                placeholder="ระบุเลข BBID"
+                value={exportSearch}
+                onChange={(event) => setExportSearch(event.target.value)}
+              />
+            </label>
+          </div>
+          <div className="export-selection-actions">
+            <span>เลือกแล้ว {selectedBbids.length} รายการ</span>
+            <button type="button" onClick={toggleAllVisible} disabled={!visibleBbids.length}>
+              {areAllVisibleSelected ? "ยกเลิกเลือกทั้งหมด" : "เลือกทั้งหมด"}
+            </button>
+            <button type="button" onClick={() => setSelectedBbids([])} disabled={!selectedBbids.length}>
+              ล้างที่เลือก
+            </button>
+          </div>
+        </div>
+        <div className="duplicate-job-table export-table">
+          <div className="table-head">
+            <span>เลือก</span>
+            <span>BBID</span>
+            <span>วันที่</span>
+            <span>สถานะ</span>
+          </div>
+          {exportItems.map((item) => (
+            <label className="duplicate-job-row" key={item.bbid}>
+              <input
+                type="checkbox"
+                checked={selectedBbids.includes(item.bbid)}
+                onChange={(event) =>
+                  setSelectedBbids((selected) =>
+                    event.target.checked
+                      ? [...selected, item.bbid]
+                      : selected.filter((bbid) => bbid !== item.bbid),
+                  )
+                }
+              />
+              <strong>{item.bbid}</strong>
+              <span>{item.dates.map(formatDisplayDate).filter(Boolean).join(", ")}</span>
+              <span className={`export-status ${item.exported ? "is-exported" : "is-pending"}`}>
+                {item.exported ? "Export แล้ว (เลือกซ้ำได้)" : "ยังไม่ Export"}
+              </span>
+            </label>
+          ))}
+        </div>
+      </section>
+      {/* <div className="panel">
         <div className="panel-head">
           <div>
             <h2>ลำดับการตรวจสอบ</h2>
@@ -284,7 +408,7 @@ export function Dashboard() {
             </div>
           ))}
         </div>
-      </div>
+      </div> */}
     </section>
   );
 }

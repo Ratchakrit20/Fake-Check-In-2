@@ -8,6 +8,7 @@ import {
 } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { getGroups, ImageGroup, RelationshipSubgroup } from "../api/client";
+import { formatDisplayDate } from "../utils/date";
 
 const classificationNames: Record<string, string> = {
   exact_file: "ไฟล์เดียวกัน 100%",
@@ -18,13 +19,8 @@ const classificationNames: Record<string, string> = {
   repeated_checkin: "พบคนและฉากเชื่อมโยงกัน",
 };
 
-function formatCheckinDate(value: string | null): string | null {
-  if (!value || !/^\d{8}$/.test(value)) return null;
-  return `${value.slice(0, 4)}-${value.slice(4, 6)}-${value.slice(6, 8)}`;
-}
-
 function ImageSourceMeta({ jobNumber, checkinDate }: { jobNumber: string | null; checkinDate: string | null }) {
-  const date = formatCheckinDate(checkinDate);
+  const date = formatDisplayDate(checkinDate);
   if (!jobNumber && !date) return null;
   return (
     <span className="image-source-meta">

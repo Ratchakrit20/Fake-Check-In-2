@@ -22,7 +22,7 @@ router = APIRouter(prefix="/batches", tags=["batches"])
 
 async def _ensure_no_active_job(session: AsyncSession) -> None:
     active = await session.scalar(
-        select(AnalysisJob.id).where(AnalysisJob.status.not_in(["COMPLETED", "FAILED"]))
+        select(AnalysisJob.id).where(AnalysisJob.status.not_in(["COMPLETED", "CANCELLED", "FAILED"]))
     )
     if active:
         raise HTTPException(status_code=409, detail="มีงานวิเคราะห์กำลังทำงานอยู่ กรุณารอให้งานเดิมเสร็จก่อน")
@@ -100,6 +100,10 @@ async def reanalyze_library(background_tasks: BackgroundTasks, session: AsyncSes
     session.add(job)
     await session.flush()
     for position, record in enumerate(records):
+        reference = parse_source_reference(record.original_filename)
+        if reference is not None:
+            record.source_job_number = reference.job_number
+            record.source_checkin_date = reference.checkin_date
         record.analysis_status = "QUEUED"
         session.add(AnalysisJobItem(job_id=job.id, image_id=record.id, position=position, status="QUEUED"))
     await session.commit()

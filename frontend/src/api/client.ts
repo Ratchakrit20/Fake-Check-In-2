@@ -49,6 +49,35 @@ export async function getStoredImageFile(imageId: string): Promise<File> {
   });
 }
 
+export type StoredImageDetail = {
+  original_filename: string;
+  mime_type: string;
+};
+
+export async function getStoredImageDetail(imageId: string): Promise<StoredImageDetail> {
+  const response = await fetch(`${API}/images/${encodeURIComponent(imageId)}`);
+  if (!response.ok) throw new Error("โหลดรายละเอียดภาพจากคลังไม่สำเร็จ");
+  return response.json() as Promise<StoredImageDetail>;
+}
+
+export type ExportableBbid = { bbid: string; image_count: number; dates: string[]; exported: boolean };
+
+export async function getExportableBbids(dateFrom: string, dateTo: string, search = ""): Promise<{ items: ExportableBbid[] }> {
+  const query = new URLSearchParams({ date_from: dateFrom, date_to: dateTo, search });
+  const response = await fetch(`${API}/exports/bbids?${query}`);
+  if (!response.ok) throw new Error("โหลดรายการ BBID สำหรับ Export ไม่สำเร็จ");
+  return response.json();
+}
+
+export async function exportBbidsPdf(bbids: string[], dateFrom: string, dateTo: string): Promise<void> {
+  const response = await fetch(`${API}/exports/pdf`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ bbids, date_from: dateFrom, date_to: dateTo }) });
+  if (!response.ok) throw new Error("สร้าง PDF ไม่สำเร็จ");
+  const url = URL.createObjectURL(await response.blob());
+  const link = document.createElement("a");
+  link.href = url; link.download = `image-export-${dateFrom}-${dateTo}.pdf`; link.click();
+  URL.revokeObjectURL(url);
+}
+
 export type DashboardData = {
   total_images: number;
   related_pairs: number;
@@ -96,6 +125,12 @@ export type BatchJob = { id: string; status: string; total: number; processed: n
 export async function getJob(jobId: string): Promise<BatchJob> {
   const response = await fetch(`${API}/jobs/${jobId}`);
   if (!response.ok) throw new Error("โหลดสถานะงานไม่สำเร็จ");
+  return response.json();
+}
+
+export async function cancelJob(jobId: string): Promise<BatchJob> {
+  const response = await fetch(`${API}/jobs/${encodeURIComponent(jobId)}/cancel`, { method: "POST" });
+  if (!response.ok) throw new Error("หยุดการวิเคราะห์ไม่สำเร็จ");
   return response.json();
 }
 

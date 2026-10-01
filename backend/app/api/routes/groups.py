@@ -6,6 +6,7 @@ from ...core.config import get_settings
 from ...db.models import ImageRecord, PairwiseResult
 from ...db.session import get_session
 from ...services.relationship_graph_service import RelationshipGraphService
+from ...services.relationship_group_service import merge_group_indexes_by_bbid
 from ...services.source_filename import declared_source_id, parse_source_reference
 
 router = APIRouter(prefix="/groups", tags=["groups"])
@@ -70,28 +71,16 @@ async def groups(session: AsyncSession = Depends(get_session)) -> dict:
                 ],
             }
         )
-    subgroup_indexes_by_source: dict[str, list[int]] = {}
+    subgroup_bbids: list[set[str]] = []
     for subgroup_index, subgroup in enumerate(relationship_groups):
-        source_ids = {
-            source_id
-            for image in subgroup["images"]
-            if (source_id := declared_source_id(image["filename"])) is not None
-        }
+        source_ids = {image["job_number"] for image in subgroup["images"] if image["job_number"]}
         subgroup["source_ids"] = sorted(source_ids)
-        for source_id in source_ids:
-            subgroup_indexes_by_source.setdefault(source_id, []).append(subgroup_index)
+        subgroup_bbids.append(source_ids)
 
     # Components remain the actual detected relationships. This extra layer
-    # only collects components carrying the same declared work/source number.
-    subgroup_edges = [
-        (indexes[0], subgroup_index)
-        for indexes in subgroup_indexes_by_source.values()
-        for subgroup_index in indexes[1:]
-    ]
-    outer_components = RelationshipGraphService.connected_components(
-        list(range(len(relationship_groups))),
-        subgroup_edges,
-    )
+    # joins their presentation when they contain the same BBID, regardless of
+    # check-in date, so the page and the PDF tell the same story.
+    outer_components = merge_group_indexes_by_bbid(subgroup_bbids)
     response_groups = []
     for outer_index, subgroup_indexes in enumerate(outer_components, start=1):
         subgroups = [relationship_groups[index] for index in subgroup_indexes]

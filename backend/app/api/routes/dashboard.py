@@ -13,9 +13,9 @@ router = APIRouter(prefix="/dashboard", tags=["dashboard"])
 async def dashboard(session: AsyncSession = Depends(get_session)) -> dict:
     summary = await build_dashboard_summary(session)
     total = summary["images_in_system"]
-    allowed = ["exact_file", "same_image", "edited_or_cropped", "background_replaced"]
+    allowed = ["exact_file", "same_image", "edited_or_cropped"]
     related = await session.scalar(select(func.count()).select_from(PairwiseResult).where(PairwiseResult.relationship_level.in_(allowed))) or 0
-    pending = await session.scalar(select(func.count()).select_from(AnalysisJob).where(AnalysisJob.status.not_in(["COMPLETED", "FAILED"]))) or 0
+    pending = await session.scalar(select(func.count()).select_from(AnalysisJob).where(AnalysisJob.status.not_in(["COMPLETED", "CANCELLED", "FAILED"]))) or 0
     failed = await session.scalar(select(func.count()).select_from(AnalysisJob).where(AnalysisJob.status == "FAILED")) or 0
     return {
         "total_images": total,
