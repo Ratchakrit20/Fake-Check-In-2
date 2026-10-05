@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import io
 from datetime import datetime
 from pathlib import Path
 from uuid import uuid4
@@ -7,6 +8,7 @@ from uuid import uuid4
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
+from PIL import Image, ImageDraw, ImageFont
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -24,7 +26,7 @@ router = APIRouter(prefix="/exports", tags=["exports"])
 RELATED_CLASSIFICATIONS = ["exact_file", "same_image", "edited_or_cropped"]
 
 class CreateExportRequest(BaseModel):
-    bbids: list[str] = Field(min_length=1)
+    customer_ids: list[str] = Field(min_length=1)
     date_from: str
     date_to: str
 
@@ -66,6 +68,7 @@ async def exportable_bbids(date_from: str, date_to: str, search: str = "", sessi
     by_bbid: dict[str, dict] = {}
     exported = {row[0] for row in (await session.execute(select(ExportReportImage.source_job_number))).all() if row[0]}
     for group in await related_groups(session):
+        group_customer_ids = sorted({customer_id for image in group if (customer_id := image_source(image)[0])})
         for image in group:
             job_number, checkin_date = image_source(image)
             if (
@@ -75,26 +78,29 @@ async def exportable_bbids(date_from: str, date_to: str, search: str = "", sessi
                 or (search and search not in job_number)
             ):
                 continue
-            item = by_bbid.setdefault(job_number, {"bbid": job_number, "image_count": 0, "dates": set()})
+            item = by_bbid.setdefault(job_number, {"bbid": job_number, "image_count": 0, "dates": set(), "related_customer_ids": set()})
             item["image_count"] += 1
             item["dates"].add(checkin_date)
-    return {"items": [{**item, "dates": sorted(item["dates"]), "exported": item["bbid"] in exported} for item in sorted(by_bbid.values(), key=lambda item: item["bbid"])]}
+            item["related_customer_ids"].update(group_customer_ids)
+    return {"items": [{**item, "dates": sorted(item["dates"]), "related_customer_ids": sorted(item["related_customer_ids"]), "exported": item["bbid"] in exported} for item in sorted(by_bbid.values(), key=lambda item: item["bbid"])]}
 
 
 @router.post("/pdf")
-async def create_export_pdf(request: CreateExportRequest, session: AsyncSession = Depends(get_session)) -> FileResponse:
+async def create_export_pdf(request: CreateExportRequest, session: AsyncSession = Depends(get_session)) -> dict:
     try:
         from reportlab.lib.colors import HexColor
         from reportlab.lib.pagesizes import A4
         from reportlab.lib.utils import ImageReader
+        from reportlab.pdfbase import pdfmetrics
+        from reportlab.pdfbase.ttfonts import TTFont
         from reportlab.pdfgen.canvas import Canvas
     except ImportError as exc:
         raise HTTPException(status_code=503, detail="PDF support is not installed; run python -m pip install -e .") from exc
-    selected_bbids = set(request.bbids)
+    selected_customer_ids = set(request.customer_ids)
     selected_groups: list[tuple[str, list[ImageRecord]]] = []
     for index, group in enumerate(await related_groups(session), start=1):
         matches_selected_period = any(
-            (job_number := image_source(image)[0]) in selected_bbids
+            (job_number := image_source(image)[0]) in selected_customer_ids
             and (checkin_date := image_source(image)[1]) is not None
             and request.date_from <= checkin_date <= request.date_to
             for image in group
@@ -105,57 +111,98 @@ async def create_export_pdf(request: CreateExportRequest, session: AsyncSession 
             selected_groups.append((f"group-{index}", group))
     if not selected_groups:
         raise HTTPException(status_code=422, detail="ไม่พบกลุ่มภาพที่ใช้ซ้ำตาม BBID และช่วงวันที่ที่เลือก")
+    report_dates = sorted(
+        {
+            checkin_date
+            for _, group in selected_groups
+            for image in group
+            if (checkin_date := image_source(image)[1])
+        }
+    )
+    report_date_from = report_dates[0] if report_dates else request.date_from
+    report_date_to = report_dates[-1] if report_dates else request.date_to
     settings = get_settings()
     export_dir = Path(settings.storage.root) / "exports"
     export_dir.mkdir(parents=True, exist_ok=True)
     report_id = str(uuid4())
     pdf_path = export_dir / f"export-{report_id}.pdf"
     canvas = Canvas(str(pdf_path), pagesize=A4)
+    font_dir = Path(__file__).parents[4] / "font" / "Sarabun"
+    thai_font, thai_bold_font = "Sarabun", "Sarabun-Bold"
+    pdfmetrics.registerFont(TTFont(thai_font, str(font_dir / "Sarabun-Regular.ttf")))
+    pdfmetrics.registerFont(TTFont(thai_bold_font, str(font_dir / "Sarabun-Bold.ttf")))
     width, height = A4
     green, orange, soft_green, muted = HexColor("#12372A"), HexColor("#F59E0B"), HexColor("#F3F8F5"), HexColor("#60756C")
     storage = LocalImageStorage(settings.storage.root)
-    logo = Path(__file__).parents[4] / "frontend" / "public" / "AIS-3BB-Fibre3-FullColor-LightBG.png"
+    logo = Path(__file__).parents[4] / "frontend" / "public" / "AIS-3BB-Fibre3-FullColor-DarkBG.png"
     margin, gap, columns = 36, 8, 4
     card_width = (width - margin * 2 - gap * (columns - 1)) / columns
     card_height = 135
 
+    def format_report_date(value: str) -> str:
+        compact = value.replace("-", "")
+        return f"{compact[6:8]}-{compact[4:6]}-{compact[0:4]}" if len(compact) == 8 else value
+
+    def draw_thai_text(text: str, x: float, y: float, size: int, color: str) -> None:
+        """Render Thai with Pillow's shaping engine, then place it in the PDF."""
+        scale = 3
+        try:
+            font = ImageFont.truetype(
+                str(font_dir / "Sarabun-Regular.ttf"), size * scale,
+                layout_engine=ImageFont.Layout.RAQM,
+            )
+        except (AttributeError, OSError, ValueError):
+            font = ImageFont.truetype(str(font_dir / "Sarabun-Regular.ttf"), size * scale)
+        box = font.getbbox(text)
+        image = Image.new("RGBA", (box[2] - box[0] + 6 * scale, box[3] - box[1] + 6 * scale), (255, 255, 255, 0))
+        ImageDraw.Draw(image).text((3 * scale - box[0], 3 * scale - box[1]), text, font=font, fill=color)
+        content = io.BytesIO()
+        image.save(content, format="PNG")
+        rendered_width, rendered_height = image.width / scale, image.height / scale
+        canvas.drawImage(ImageReader(content), x, y - rendered_height + 2, width=rendered_width, height=rendered_height, mask="auto")
+
     def draw_header(page_number: int) -> float:
         canvas.setFillColor(green)
         canvas.rect(0, height - 88, width, 88, fill=1, stroke=0)
-        # The source logo is designed for a light background. Give it a white
-        # panel in the dark report header and make it prominent but contained.
-        canvas.setFillColor(HexColor("#FFFFFF"))
-        canvas.roundRect(margin, height - 78, 102, 60, 8, fill=1, stroke=0)
         if logo.exists():
             canvas.drawImage(
-                ImageReader(str(logo)), margin + 8, height - 70,
-                width=86, height=44, preserveAspectRatio=True, mask="auto",
+                ImageReader(str(logo)), margin, height - 70,
+                width=102, height=48, preserveAspectRatio=True, mask="auto",
             )
         canvas.setFillColor(HexColor("#FFFFFF"))
-        canvas.setFont("Helvetica-Bold", 16)
-        canvas.drawString(152, height - 51, "Image Reuse Report")
-        period = request.date_from if request.date_from == request.date_to else f"{request.date_from} - {request.date_to}"
+        canvas.setFont(thai_bold_font, 16)
+        canvas.drawString(148, height - 51, "Fake Check In Report")
+        period = format_report_date(report_date_from) if report_date_from == report_date_to else f"{format_report_date(report_date_from)} - {format_report_date(report_date_to)}"
         canvas.setFillColor(green)
-        canvas.setFont("Helvetica", 9)
+        canvas.setFont(thai_font, 10)
         canvas.drawString(margin, height - 111, f"Period: {period}")
-        canvas.setFont("Helvetica-Bold", 9)
-        canvas.drawString(margin, height - 127, f"BBIDs selected: {len(request.bbids)}")
+        canvas.setFont(thai_bold_font, 10)
+        canvas.drawString(margin, height - 127, f"Customer ID selected: {len(selected_customer_ids)}")
+        canvas.setFont(thai_font, 10)
+        canvas.drawString(margin, height - 143, f"Export Date: {datetime.now().strftime('%d-%m-%Y')}")
         canvas.setFillColor(muted)
-        canvas.setFont("Helvetica", 8)
+        canvas.setFont(thai_font, 9)
         canvas.drawRightString(width - margin, 25, f"Page {page_number}")
         return height - 180
 
     def draw_group_heading(number: int, group: list[ImageRecord], y_position: float) -> float:
-        bbids = ", ".join(sorted({job for image in group if (job := image_source(image)[0])}))
+        customer_ids = ", ".join(sorted({customer_id for image in group if (customer_id := image_source(image)[0])}))
         canvas.setFillColor(orange)
         canvas.roundRect(margin, y_position - 4, 5, 30, 2, fill=1, stroke=0)
         canvas.setFillColor(green)
-        canvas.setFont("Helvetica-Bold", 12)
+        canvas.setFont(thai_bold_font, 13)
         canvas.drawString(margin + 14, y_position + 10, f"Group {number}")
         canvas.setFillColor(muted)
-        canvas.setFont("Helvetica", 8)
-        canvas.drawString(margin + 14, y_position - 3, f"BBIDs in group: {bbids[:104]}")
-        return y_position - 25
+        canvas.setFont(thai_font, 9)
+        canvas.drawString(margin + 14, y_position - 3, f"Customer ID in group: {customer_ids[:90]}")
+        draw_thai_text(
+            "กลุ่มนี้รวมภาพที่ใช้ซ้ำหรือคล้ายกัน ซึ่งถูกนำไปใช้กับ Customer ID อื่น",
+            margin + 14,
+            y_position - 10,
+            9,
+            "#60756C",
+        )
+        return y_position - 36
 
     def draw_card(image: ImageRecord, x: float, y_position: float) -> None:
         canvas.setFillColor(soft_green)
@@ -169,13 +216,13 @@ async def create_export_pdf(request: CreateExportRequest, session: AsyncSession 
             )
         job_number, checkin_date = image_source(image)
         canvas.setFillColor(green)
-        canvas.setFont("Helvetica-Bold", 7)
-        canvas.drawString(x + 7, y_position - 105, f"BBID: {job_number or '-'}")
-        canvas.setFont("Helvetica", 7)
+        canvas.setFont(thai_bold_font, 8)
+        canvas.drawString(x + 7, y_position - 105, f"Customer ID: {job_number or '-'}")
+        canvas.setFont(thai_font, 8)
         canvas.drawString(x + 7, y_position - 116, f"Date: {checkin_date or '-'}")
         filename = image.original_filename
         canvas.setFillColor(muted)
-        canvas.setFont("Helvetica", 6.5)
+        canvas.setFont(thai_font, 7)
         canvas.drawString(x + 7, y_position - 127, filename[:28] + ("..." if len(filename) > 28 else ""))
 
     page_number = 1
@@ -192,13 +239,31 @@ async def create_export_pdf(request: CreateExportRequest, session: AsyncSession 
             for column, image in enumerate(group[row_start : row_start + columns]):
                 draw_card(image, margin + column * (card_width + gap), y)
                 report_images[image.id] = (image, group_id)
-            y -= card_height + 10
+            y -= card_height + 25
+        canvas.setStrokeColor(HexColor("#CFE0D5"))
+        canvas.setLineWidth(0.7)
+        canvas.line(margin, y + 12, width - margin, y + 12)
         y -= 25
     canvas.save()
-    report = ExportReport(id=report_id, date_from=request.date_from, date_to=request.date_to, pdf_path=str(pdf_path), created_at=datetime.utcnow())
+    report = ExportReport(id=report_id, date_from=report_date_from, date_to=report_date_to, pdf_path=str(pdf_path), created_at=datetime.utcnow())
     session.add(report)
     for image, group_id in report_images.values():
         job_number, checkin_date = image_source(image)
         session.add(ExportReportImage(export_report_id=report_id, image_id=image.id, source_job_number=job_number, source_checkin_date=checkin_date, group_id_snapshot=group_id))
     await session.commit()
-    return FileResponse(pdf_path, media_type="application/pdf", filename=f"relationship-report-{request.date_from}-{request.date_to}.pdf")
+    return {
+        "report_id": report_id,
+        "download_url": f"/api/v1/exports/reports/{report_id}",
+    }
+
+
+@router.get("/reports/{report_id}")
+async def download_export_pdf(report_id: str, session: AsyncSession = Depends(get_session)) -> FileResponse:
+    report = await session.get(ExportReport, report_id)
+    if report is None or not Path(report.pdf_path).is_file():
+        raise HTTPException(status_code=404, detail="ไม่พบไฟล์รายงาน")
+    return FileResponse(
+        report.pdf_path,
+        media_type="application/pdf",
+        filename=f"relationship-report-{report.date_from}-{report.date_to}.pdf",
+    )

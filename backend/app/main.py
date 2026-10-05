@@ -95,7 +95,12 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(title=settings.app.name, version="0.1.0", lifespan=lifespan)
 app.add_middleware(RequestSizeLimitMiddleware, max_bytes=settings.app.max_request_size_mb * 1024 * 1024)
-app.add_middleware(CORSMiddleware, allow_origins=["http://localhost:5173"], allow_methods=["*"], allow_headers=["*"])
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 app.include_router(api_router, prefix=settings.app.api_prefix)
 
 

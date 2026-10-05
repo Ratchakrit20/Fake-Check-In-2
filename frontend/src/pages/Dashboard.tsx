@@ -232,21 +232,21 @@ export function Dashboard() {
         <section className="panel dashboard-chart-panel">
           <div className="panel-head">
             <div>
-              <h2>BBID ที่พบการใช้ภาพซ้ำ</h2>
-              <p>เปรียบเทียบ BBID ทั้งหมดกับ BBID ที่มีภาพใช้ซ้ำ</p>
+            <h2>Customer ID ที่พบการใช้ภาพซ้ำ</h2>
+            <p>เปรียบเทียบ Customer ID ทั้งหมดกับ Customer ID ที่มีภาพใช้ซ้ำ</p>
             </div>
           </div>
           <Donut
             value={data.reused_jobs}
             total={data.total_jobs}
-            label="BBID ที่ใช้ภาพซ้ำ"
+            label="Customer ID ที่ใช้ภาพซ้ำ"
           />
           <div className="dashboard-legend">
             <span>
-              BBID ทั้งหมด <b>{data.total_jobs.toLocaleString()}</b>
+              Customer ID ทั้งหมด <b>{data.total_jobs.toLocaleString()}</b>
             </span>
             <span>
-              พบใช้ซ้ำ <b>{data.reused_jobs.toLocaleString()}</b> BBID
+              พบใช้ซ้ำ <b>{data.reused_jobs.toLocaleString()}</b> Customer ID
             </span>
           </div>
           <button
@@ -260,15 +260,15 @@ export function Dashboard() {
       <section className="panel duplicate-job-panel">
         <div className="panel-head">
           <div>
-            <h2>เลข BBID ที่พบการใช้ภาพซ้ำ</h2>
+            <h2>Customer ID ที่พบการใช้ภาพซ้ำ</h2>
             <p>ใช้สำหรับตรวจสอบต่อและนำไปทำรายงาน</p>
           </div>
-          <strong>{data.duplicate_jobs.length.toLocaleString()} BBID</strong>
+          <strong>{data.duplicate_jobs.length.toLocaleString()} Customer ID</strong>
         </div>
         {data.duplicate_jobs.length ? (
           <div className="duplicate-job-table">
             <div className="table-head">
-              <span>BBID</span>
+              <span>Customer ID</span>
               <span>ภาพในระบบ</span>
               <span>ภาพใช้ซ้ำ</span>
               <span>ภาพที่เชื่อมโยง</span>
@@ -297,8 +297,8 @@ export function Dashboard() {
       <section className="panel duplicate-job-panel export-panel">
         <div className="panel-head">
           <div>
-            <h2>Export รายงาน PDF</h2>
-            <p>เลือก BBID และช่วงวันที่ก่อนสร้างรายงานรวม</p>
+            <h2>REPORT</h2>
+            <p>เลือก Customer ID ที่พบความสัมพันธ์ก่อนสร้างรายงานรวม</p>
           </div>
           <button
             className="report-download"
@@ -337,9 +337,9 @@ export function Dashboard() {
               />
             </label>
             <label className="export-search">
-              <span>ค้นหา BBID</span>
+              <span>ค้นหา Customer ID</span>
               <input
-                placeholder="ระบุเลข BBID"
+                placeholder="ระบุ Customer ID"
                 value={exportSearch}
                 onChange={(event) => setExportSearch(event.target.value)}
               />
@@ -358,7 +358,7 @@ export function Dashboard() {
         <div className="duplicate-job-table export-table">
           <div className="table-head">
             <span>เลือก</span>
-            <span>BBID</span>
+            <span>Customer ID</span>
             <span>วันที่</span>
             <span>สถานะ</span>
           </div>
@@ -370,7 +370,7 @@ export function Dashboard() {
                 onChange={(event) =>
                   setSelectedBbids((selected) =>
                     event.target.checked
-                      ? [...selected, item.bbid]
+                      ? [...new Set([...selected, ...item.related_customer_ids])]
                       : selected.filter((bbid) => bbid !== item.bbid),
                   )
                 }

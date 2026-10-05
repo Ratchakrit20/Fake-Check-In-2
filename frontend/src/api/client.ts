@@ -8,7 +8,11 @@ export type RelationshipResult = {
   visualizations: Record<string, string>;
 };
 
-const API = "/api/v1";
+// Downloading a large PDF through Vite's development proxy can be terminated
+// after a 200 response. In development call FastAPI directly; production
+// keeps the relative API URL for its reverse proxy.
+const API_ORIGIN = import.meta.env.DEV ? "http://127.0.0.1:8000" : "";
+const API = `${API_ORIGIN}/api/v1`;
 
 export async function compareImages(first: File, second: File): Promise<RelationshipResult> {
   const body = new FormData();
@@ -60,7 +64,7 @@ export async function getStoredImageDetail(imageId: string): Promise<StoredImage
   return response.json() as Promise<StoredImageDetail>;
 }
 
-export type ExportableBbid = { bbid: string; image_count: number; dates: string[]; exported: boolean };
+export type ExportableBbid = { bbid: string; image_count: number; dates: string[]; related_customer_ids: string[]; exported: boolean };
 
 export async function getExportableBbids(dateFrom: string, dateTo: string, search = ""): Promise<{ items: ExportableBbid[] }> {
   const query = new URLSearchParams({ date_from: dateFrom, date_to: dateTo, search });
@@ -69,13 +73,16 @@ export async function getExportableBbids(dateFrom: string, dateTo: string, searc
   return response.json();
 }
 
-export async function exportBbidsPdf(bbids: string[], dateFrom: string, dateTo: string): Promise<void> {
-  const response = await fetch(`${API}/exports/pdf`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ bbids, date_from: dateFrom, date_to: dateTo }) });
-  if (!response.ok) throw new Error("สร้าง PDF ไม่สำเร็จ");
-  const url = URL.createObjectURL(await response.blob());
-  const link = document.createElement("a");
-  link.href = url; link.download = `image-export-${dateFrom}-${dateTo}.pdf`; link.click();
-  URL.revokeObjectURL(url);
+export async function exportBbidsPdf(customerIds: string[], dateFrom: string, dateTo: string): Promise<void> {
+  const response = await fetch(`${API}/exports/pdf`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ customer_ids: customerIds, date_from: dateFrom, date_to: dateTo }) });
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: "สร้าง PDF ไม่สำเร็จ" }));
+    throw new Error(error.detail ?? "สร้าง PDF ไม่สำเร็จ");
+  }
+  const payload = await response.json() as { download_url: string };
+  // Let the browser navigate to the PDF response directly instead of reading
+  // a large PDF stream with fetch. This avoids ERR_FAILED after HTTP 200.
+  window.location.assign(`${API_ORIGIN}${payload.download_url}`);
 }
 
 export type DashboardData = {
