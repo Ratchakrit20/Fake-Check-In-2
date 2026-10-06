@@ -3,7 +3,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 _SOURCE_REFERENCE_PATTERN = re.compile(
-    r"(?:^|_)new_(?P<date>\d{8})(?:_|$).*?(?:home|splitter)_(?P<job_number>\d{10})(?:_|$)",
+    r"(?:^|_)new_(?P<date>\d{8})(?:_|$).*?(?:home|splitter)_(?P<job_number>\d{10})_(?P<technician_id>\d{10})(?:_|$)",
     re.IGNORECASE,
 )
 _DECLARED_SOURCE_PATTERN = re.compile(
@@ -18,20 +18,22 @@ class SourceReference:
 
     job_number: str
     checkin_date: str
+    technician_id: str
 
     @property
-    def submission_key(self) -> tuple[str, str]:
-        return (self.job_number, self.checkin_date)
+    def submission_key(self) -> tuple[str, str, str]:
+        return (self.job_number, self.checkin_date, self.technician_id)
 
 
 def parse_source_reference(filename: str) -> SourceReference | None:
-    """Parse ``new_YYYYMMDD_*_home|splitter_<10-digit job>`` filenames."""
+    """Parse new_YYYYMMDD_*_home|splitter_<10-digit customer>_<10-digit technician> filenames."""
     match = _SOURCE_REFERENCE_PATTERN.search(Path(filename).name)
     if match is None:
         return None
     return SourceReference(
         job_number=match.group("job_number"),
         checkin_date=match.group("date"),
+        technician_id=match.group("technician_id")
     )
 
 

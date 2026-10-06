@@ -27,10 +27,19 @@ from .source_filename import parse_source_reference
 
 
 def same_submission(first: ImageRecord, second: ImageRecord) -> bool:
-    """Skip only images from the same BBID on the same check-in date."""
+    """Skip images from the same Customer ID on the same check-in date.
+
+    Technician ID is retained only as source metadata. It must not influence
+    candidate selection or create additional relationships.
+    """
     first_reference = parse_source_reference(first.original_filename)
     second_reference = parse_source_reference(second.original_filename)
-    return first_reference is not None and second_reference is not None and first_reference.submission_key == second_reference.submission_key
+    return (
+        first_reference is not None
+        and second_reference is not None
+        and first_reference.job_number == second_reference.job_number
+        and first_reference.checkin_date == second_reference.checkin_date
+    )
 
 
 @lru_cache
@@ -115,6 +124,8 @@ async def process_batch_job(job_id: str, force: bool = False) -> None:
                     select(AnalysisJobItem).where(AnalysisJobItem.job_id == job_id).order_by(AnalysisJobItem.position)
                 )
             )
+            completed_items = [item for item in items if item.status == JobStatus.COMPLETED.value]
+            pending_items = [item for item in items if item.status != JobStatus.COMPLETED.value]
             all_records = {record.id: record for record in await session.scalars(select(ImageRecord))}
             records_by_sha: dict[str, list[str]] = {}
             for record in all_records.values():
@@ -184,11 +195,11 @@ async def process_batch_job(job_id: str, force: bool = False) -> None:
             existing_rows = retained_rows
         existing_ids = {normalize_pair(row.image_a_id, row.image_b_id): row.id for row in existing_rows}
         seen_pairs = set() if force else set(existing_ids)
-        await _set_job(job_id, JobStatus.VERIFYING, 0)
+        await _set_job(job_id, JobStatus.VERIFYING, len(completed_items))
 
         loop = asyncio.get_running_loop()
         with ThreadPoolExecutor(max_workers=profile.pair_workers, thread_name_prefix="pair-analysis") as executor:
-            for position, item in enumerate(items, start=1):
+            for offset, item in enumerate(pending_items, start=1):
                 if await _cancel_requested(job_id):
                     return
                 current = all_records.get(item.image_id)
@@ -200,6 +211,11 @@ async def process_batch_job(job_id: str, force: bool = False) -> None:
                 current_path = record_paths.get(current.id)
                 if current_path is None:
                     continue
+                async with SessionFactory() as session:
+                    item_row = await session.get(AnalysisJobItem, item.id)
+                    if item_row:
+                        item_row.status = "PROCESSING"
+                        await session.commit()
                 current_bytes = current_path.read_bytes()
                 candidates = vector_store.search(vector, settings.vector_search.top_k)
                 candidate_scores = {candidate_id: similarity for candidate_id, similarity in candidates}
@@ -305,10 +321,13 @@ async def process_batch_job(job_id: str, force: bool = False) -> None:
                     if item_row:
                         item_row.status = JobStatus.COMPLETED.value
                     await session.commit()
-                await _set_job(job_id, JobStatus.VERIFYING, position)
+                await _set_job(job_id, JobStatus.VERIFYING, len(completed_items) + offset)
         await _set_job(job_id, JobStatus.COMPLETED, len(items))
     except Exception as exc:  # noqa: BLE001 - job boundary must persist every failure
         if await _cancel_requested(job_id):
+            return
+        if "cannot schedule new futures after shutdown" in str(exc):
+            await _set_job(job_id, JobStatus.INTERRUPTED, error="worker interrupted; resume from checkpoint")
             return
         await _set_job(job_id, JobStatus.FAILED, error=str(exc))
 

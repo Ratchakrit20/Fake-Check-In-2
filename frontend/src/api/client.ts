@@ -141,6 +141,12 @@ export async function cancelJob(jobId: string): Promise<BatchJob> {
   return response.json();
 }
 
+export async function resumeJob(jobId: string): Promise<BatchJob> {
+  const response = await fetch(`${API}/jobs/${encodeURIComponent(jobId)}/resume`, { method: "POST" });
+  if (!response.ok) throw new Error("ทำต่อจากจุดเดิมไม่สำเร็จ");
+  return response.json();
+}
+
 export async function getActiveJob(): Promise<BatchJob | null> {
   const response = await fetch(`${API}/jobs/active`);
   if (!response.ok) throw new Error("โหลดงานที่กำลังทำอยู่ไม่สำเร็จ");
@@ -155,6 +161,7 @@ export type RelationshipSubgroup = {
   images: Array<{
     id: string;
     filename: string;
+    technician_id: string | null;
     job_number: string | null;
     checkin_date: string | null;
     width: number;
@@ -167,6 +174,7 @@ export type RelationshipSubgroup = {
 export type ImageGroup = {
   id: number;
   source_ids: string[];
+  technician_ids: string[];
   size: number;
   relationship_count: number;
   subgroups: RelationshipSubgroup[];

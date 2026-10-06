@@ -50,6 +50,8 @@ async def groups(session: AsyncSession = Depends(get_session)) -> dict:
                     {
                         "id": image_id,
                         "filename": image_map[image_id].original_filename,
+                        "technician_id": image_map[image_id].source_technician_id
+                        or (reference.technician_id if (reference := parse_source_reference(image_map[image_id].original_filename)) else None),
                         "job_number": image_map[image_id].source_job_number
                         or (reference.job_number if (reference := parse_source_reference(image_map[image_id].original_filename)) else None),
                         "checkin_date": image_map[image_id].source_checkin_date
@@ -74,7 +76,9 @@ async def groups(session: AsyncSession = Depends(get_session)) -> dict:
     subgroup_bbids: list[set[str]] = []
     for subgroup_index, subgroup in enumerate(relationship_groups):
         source_ids = {image["job_number"] for image in subgroup["images"] if image["job_number"]}
+        technician_ids = {image["technician_id"] for image in subgroup["images"] if image["technician_id"]}
         subgroup["source_ids"] = sorted(source_ids)
+        subgroup["technician_ids"] = sorted(technician_ids)
         subgroup_bbids.append(source_ids)
 
     # Components remain the actual detected relationships. This extra layer
@@ -96,10 +100,12 @@ async def groups(session: AsyncSession = Depends(get_session)) -> dict:
                 for source_id in subgroup["source_ids"]
             }
         )
+        technician_ids = sorted({technician_id for subgroup in subgroups for technician_id in subgroup["technician_ids"]})
         response_groups.append(
             {
                 "id": outer_index,
                 "source_ids": source_ids,
+                "technician_ids": technician_ids,
                 "size": len(images_by_id),
                 "relationship_count": sum(
                     len(subgroup["relationships"]) for subgroup in subgroups

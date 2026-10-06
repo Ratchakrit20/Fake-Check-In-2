@@ -36,6 +36,7 @@ async def init_database() -> None:
                 for row in (await connection.execute(text("PRAGMA table_info(images)"))).all()
             }
             image_additions = {
+                "source_technician_id": "VARCHAR(10)",
                 "source_job_number": "VARCHAR(10)",
                 "source_checkin_date": "VARCHAR(8)",
             }
@@ -54,9 +55,17 @@ async def init_database() -> None:
             for column, data_type in job_additions.items():
                 if column not in job_columns:
                     await connection.execute(text(f"ALTER TABLE analysis_jobs ADD COLUMN {column} {data_type}"))
+            export_image_columns = {
+                row[1]
+                for row in (await connection.execute(text("PRAGMA table_info(export_report_images)"))).all()
+            }
+            if "source_technician_id" not in export_image_columns:
+                await connection.execute(text("ALTER TABLE export_report_images ADD COLUMN source_technician_id VARCHAR(10)"))
         else:
             await connection.execute(text("ALTER TABLE images ADD COLUMN IF NOT EXISTS source_job_number VARCHAR(10)"))
             await connection.execute(text("ALTER TABLE images ADD COLUMN IF NOT EXISTS source_checkin_date VARCHAR(8)"))
+            await connection.execute(text("ALTER TABLE images ADD COLUMN IF NOT EXISTS source_technician_id VARCHAR(10)"))
+            await connection.execute(text("ALTER TABLE export_report_images ADD COLUMN IF NOT EXISTS source_technician_id VARCHAR(10)"))
             await connection.execute(text("ALTER TABLE analysis_jobs ADD COLUMN IF NOT EXISTS started_at TIMESTAMP"))
             await connection.execute(text("ALTER TABLE analysis_jobs ADD COLUMN IF NOT EXISTS completed_at TIMESTAMP"))
             await connection.execute(text("ALTER TABLE analysis_jobs ADD COLUMN IF NOT EXISTS duration_seconds DOUBLE PRECISION"))
@@ -65,15 +74,19 @@ async def init_database() -> None:
         )
         await connection.execute(text("CREATE INDEX IF NOT EXISTS ix_images_source_job_number ON images (source_job_number)"))
         await connection.execute(text("CREATE INDEX IF NOT EXISTS ix_images_source_checkin_date ON images (source_checkin_date)"))
+        await connection.execute(text("CREATE INDEX IF NOT EXISTS ix_images_source_technician_id ON images (source_technician_id)"))
 
     # Backfill existing libraries created before source metadata was persisted.
     async with SessionFactory() as session:
-        records = list(await session.scalars(select(ImageRecord).where(ImageRecord.source_job_number.is_(None))))
+        records = list(await session.scalars(select(ImageRecord).where(
+            ImageRecord.source_job_number.is_(None) | ImageRecord.source_technician_id.is_(None)
+        )))
         for record in records:
             reference = parse_source_reference(record.original_filename)
             if reference is not None:
                 record.source_job_number = reference.job_number
                 record.source_checkin_date = reference.checkin_date
+                record.source_technician_id = reference.technician_id
         await session.commit()
 
 

@@ -83,6 +83,22 @@
   margin: 0
 }
 
+.group-source-summary {
+  display: grid;
+  gap: 3px;
+  margin: 8px 0 0;
+  color: #60756c;
+  font-size: 13px;
+}
+
+.group-source-summary span {
+  display: block;
+}
+
+.group-source-summary b {
+  color: #18352b;
+}
+
 .group-title>span {
   display: flex;
   align-items: center;

@@ -17,6 +17,7 @@ import {
   getGroups,
   getJob,
   reanalyzeLibrary,
+  resumeJob,
 } from "../api/client";
 
 const stageNames: Record<string, string> = {
@@ -26,6 +27,7 @@ const stageNames: Record<string, string> = {
   VERIFYING: "กำลังวิเคราะห์รูปภาพ",
   COMPLETED: "เสร็จสิ้น",
   CANCELLED: "หยุดการวิเคราะห์แล้ว",
+  INTERRUPTED: "การวิเคราะห์ถูกขัดจังหวะ",
   FAILED: "วิเคราะห์ไม่สำเร็จ",
 };
 
@@ -45,7 +47,7 @@ export function Batch() {
       .catch(() => undefined);
   }, []);
   useEffect(() => {
-    if (!job || ["COMPLETED", "CANCELLED", "FAILED"].includes(job.status)) return;
+    if (!job || ["COMPLETED", "CANCELLED", "INTERRUPTED", "FAILED"].includes(job.status)) return;
     const timer = window.setInterval(async () => {
       try {
         const next = await getJob(job.id);
@@ -132,10 +134,22 @@ export function Batch() {
       setUploading(false);
     }
   }
+  async function resume() {
+    if (!job) return;
+    setUploading(true);
+    setError("");
+    try {
+      setJob(await resumeJob(job.id));
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "ทำต่อจากจุดเดิมไม่สำเร็จ");
+    } finally {
+      setUploading(false);
+    }
+  }
   const progress = job
     ? Math.round((job.processed / Math.max(1, job.total)) * 100)
     : 0;
-  const isRunning = !!job && !["COMPLETED", "CANCELLED", "FAILED"].includes(job.status);
+  const isRunning = !!job && !["COMPLETED", "CANCELLED", "INTERRUPTED", "FAILED"].includes(job.status);
   return (
     <section>
       <header className="page-head">
@@ -218,6 +232,11 @@ export function Batch() {
         )}
       </div>
       {error && <div className="error">{error}</div>}
+      {job && ["FAILED", "INTERRUPTED"].includes(job.status) && (
+        <button className="reanalyze" disabled={uploading} onClick={resume}>
+          <RotateCcw size={18} /> ทำต่อจากจุดเดิม
+        </button>
+      )}
       {job && (
         <div className="job-progress panel">
           <div className="job-progress-overview">

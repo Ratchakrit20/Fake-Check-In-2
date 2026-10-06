@@ -209,7 +209,7 @@ export function Groups() {
                 <span>
                   กลุ่มที่ {group.id}
                 </span>
-                <strong>{group.source_ids.length} BBID</strong>
+                <strong>{group.source_ids.length} Customer ID</strong>
                 <small>{group.size} รูปภาพ</small>
               </button>
             ))}
@@ -221,7 +221,11 @@ export function Groups() {
                   <p className="eyebrow">
                     กลุ่มที่ {selected.id}
                   </p>
-                  <h2>{selected.source_ids.length} BBID · {selected.size} รูปภาพ</h2>
+                  <h2>{selected.source_ids.length} Customer ID · {selected.size} รูปภาพ</h2>
+                  <p className="group-source-summary">
+                    <span><b>Technician ID:</b> {selected.technician_ids.join(", ") || "-"}</span>
+                    <span><b>Customer ID:</b> {selected.source_ids.join(", ")}</span>
+                  </p>
                 </div>
                 <span>
                   <Link2 size={16} />

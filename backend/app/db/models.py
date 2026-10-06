@@ -19,6 +19,7 @@ class ImageRecord(Base):
     __tablename__ = "images"
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     original_filename: Mapped[str] = mapped_column(String(255))
+    source_technician_id: Mapped[str | None] = mapped_column(String(10), nullable=True, index=True)
     source_job_number: Mapped[str | None] = mapped_column(String(10), nullable=True, index=True)
     source_checkin_date: Mapped[str | None] = mapped_column(String(8), nullable=True, index=True)
     storage_path: Mapped[str] = mapped_column(Text)
@@ -106,5 +107,6 @@ class ExportReportImage(Base):
     image_id: Mapped[str] = mapped_column(ForeignKey("images.id", ondelete="RESTRICT"), index=True)
     source_job_number: Mapped[str | None] = mapped_column(String(10), nullable=True, index=True)
     source_checkin_date: Mapped[str | None] = mapped_column(String(8), nullable=True, index=True)
+    source_technician_id: Mapped[str | None] = mapped_column(String(10), nullable=True, index=True)
     group_id_snapshot: Mapped[str] = mapped_column(String(64))
     __table_args__ = (UniqueConstraint("export_report_id", "image_id", name="uq_export_report_image"),)

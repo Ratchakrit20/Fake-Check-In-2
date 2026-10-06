@@ -44,6 +44,7 @@ async def upload_image(file: UploadFile = File(...), session: AsyncSession = Dep
     record = ImageRecord(
         id=image_id,
         original_filename=original_filename,
+        source_technician_id=source_reference.technician_id if source_reference else None,
         source_job_number=source_reference.job_number if source_reference else None,
         source_checkin_date=source_reference.checkin_date if source_reference else None,
         storage_path=str(storage_path),

@@ -36,6 +36,11 @@ def image_source(image: ImageRecord) -> tuple[str | None, str | None]:
     return image.source_job_number or (reference.job_number if reference else None), image.source_checkin_date or (reference.checkin_date if reference else None)
 
 
+def image_technician(image: ImageRecord) -> str | None:
+    reference = parse_source_reference(image.original_filename)
+    return image.source_technician_id or (reference.technician_id if reference else None)
+
+
 async def related_groups(session: AsyncSession) -> list[list[ImageRecord]]:
     """Only components backed by a qualified detected relationship."""
     settings = get_settings()
@@ -187,22 +192,27 @@ async def create_export_pdf(request: CreateExportRequest, session: AsyncSession 
 
     def draw_group_heading(number: int, group: list[ImageRecord], y_position: float) -> float:
         customer_ids = ", ".join(sorted({customer_id for image in group if (customer_id := image_source(image)[0])}))
+        technician_ids = ", ".join(sorted({technician_id for image in group if (technician_id := image_technician(image))}))
         canvas.setFillColor(orange)
         canvas.roundRect(margin, y_position - 4, 5, 30, 2, fill=1, stroke=0)
         canvas.setFillColor(green)
         canvas.setFont(thai_bold_font, 13)
         canvas.drawString(margin + 14, y_position + 10, f"Group {number}")
         canvas.setFillColor(muted)
+        canvas.setFont(thai_bold_font, 9)
+        canvas.drawString(margin + 14, y_position - 3, "Technician ID:")
+        canvas.drawString(margin + 14, y_position - 14, "Customer ID:")
         canvas.setFont(thai_font, 9)
-        canvas.drawString(margin + 14, y_position - 3, f"Customer ID in group: {customer_ids[:90]}")
+        canvas.drawString(margin + 76, y_position - 3, technician_ids[:88] or "-")
+        canvas.drawString(margin + 76, y_position - 14, customer_ids[:90])
         draw_thai_text(
             "กลุ่มนี้รวมภาพที่ใช้ซ้ำหรือคล้ายกัน ซึ่งถูกนำไปใช้กับ Customer ID อื่น",
             margin + 14,
-            y_position - 10,
+            y_position - 21,
             9,
             "#60756C",
         )
-        return y_position - 36
+        return y_position - 43
 
     def draw_card(image: ImageRecord, x: float, y_position: float) -> None:
         canvas.setFillColor(soft_green)
@@ -249,7 +259,7 @@ async def create_export_pdf(request: CreateExportRequest, session: AsyncSession 
     session.add(report)
     for image, group_id in report_images.values():
         job_number, checkin_date = image_source(image)
-        session.add(ExportReportImage(export_report_id=report_id, image_id=image.id, source_job_number=job_number, source_checkin_date=checkin_date, group_id_snapshot=group_id))
+        session.add(ExportReportImage(export_report_id=report_id, image_id=image.id, source_job_number=job_number, source_checkin_date=checkin_date, source_technician_id=image_technician(image), group_id_snapshot=group_id))
     await session.commit()
     return {
         "report_id": report_id,
