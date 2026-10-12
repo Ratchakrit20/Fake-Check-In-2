@@ -7,7 +7,7 @@ _SOURCE_REFERENCE_PATTERN = re.compile(
     re.IGNORECASE,
 )
 _DATE_PATTERN = re.compile(
-    r"(?:^|_)(?:new|ma-mat)_(?P<date>\d{8}|null)(?:_|$)",
+    r"(?:^|_)(?:new|ma-mat|ma-new|ma-splice)_(?P<date>\d{8}|null)(?:_|$)",
     re.IGNORECASE,
 )
 _DECLARED_SOURCE_PATTERN = re.compile(

@@ -7,25 +7,19 @@ import xlsxwriter
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ..core.config import get_settings
 from ..db.models import ImageRecord, PairwiseResult
+from .relationship_policy import REPORTABLE_CLASSIFICATIONS
 from .source_filename import declared_source_id
 
-REUSED_CLASSIFICATIONS = {
-    "exact_file", 
-    "same_image", 
-    "edited_or_cropped",
-    # "background_replaced", 
-    # "same_scene_new_capture", 
-    # "repeated_checkin"
-    }
-
-
 async def build_dashboard_summary(session: AsyncSession) -> dict:
+    minimum_score = get_settings().relationship.report_min_relationship_score
     images = list(await session.scalars(select(ImageRecord)))
     reused_pairs = list(
         await session.scalars(
             select(PairwiseResult).where(
-                PairwiseResult.relationship_level.in_(REUSED_CLASSIFICATIONS)
+                PairwiseResult.relationship_level.in_(REPORTABLE_CLASSIFICATIONS),
+                PairwiseResult.relationship_score >= minimum_score,
             )
         )
     )

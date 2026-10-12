@@ -27,6 +27,30 @@ export_reports 1 ──< export_report_images >── 1 images
 
 `source_job_number` is displayed in the UI and PDF as **Customer ID**. The database column deliberately retains its old technical name so existing records and integrations continue to work.
 
+## Relationship eligibility and score policy
+
+Dashboard, Groups, and PDF Export use the same classification policy:
+`exact_file`, `same_image`, and `edited_or_cropped`. The shared list is in
+`backend/app/services/relationship_policy.py` so the three surfaces cannot
+silently drift apart.
+
+`config/default.yaml` → `relationship.report_min_relationship_score` is an
+optional second filter applied after classification. It is `0.00` by default,
+so every eligible classification is currently shown and exportable. The score
+is still stored for every pair and remains available for audit/debugging.
+
+To make later filtering stricter without changing code, restart the backend
+after changing this value:
+
+| Value | Effect |
+| --- | --- |
+| `0.00` | No score filtering; all eligible classifications are grouped and exportable. |
+| `0.30` | Light filter; excludes low-confidence eligible pairs, but may split a weakly connected group. |
+| `0.65` | Previous stricter filter; fewer false-positive links, with a higher risk of omitting borderline reused images. |
+
+Increasing the value can remove a linking pair and therefore split one image
+group into several groups. Lowering it can merge groups through weaker links.
+
 ## Resumable analysis jobs
 
 `analysis_job_items.status` is the durable checkpoint for batch analysis. Each item moves from `QUEUED` to `PROCESSING` and then `COMPLETED`; a resumed job processes only items not marked `COMPLETED`. If a worker shuts down during pair analysis, the job is marked `INTERRUPTED` and can be resumed through `POST /api/v1/jobs/{job_id}/resume`. This avoids recomputing completed images after a restart or power interruption.

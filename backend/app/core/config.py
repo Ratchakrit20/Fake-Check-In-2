@@ -120,6 +120,7 @@ class RelationshipConfig(BaseModel):
     high_threshold: float = Field(ge=0, le=1)
     possible_threshold: float = Field(ge=0, le=1)
     graph_edge_threshold: float = Field(ge=0, le=1)
+    report_min_relationship_score: float = Field(default=0.0, ge=0, le=1)
     partial_reuse_min_inliers: int = Field(gt=0)
     partial_reuse_min_inlier_ratio: float = Field(gt=0, le=1)
     background_replaced_min_embedding_similarity: float = Field(ge=0, le=1)

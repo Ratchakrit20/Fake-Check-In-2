@@ -33,3 +33,15 @@ SELECT COUNT(DISTINCT source_number) AS source_number_count
 FROM extracted
 WHERE length(source_number) = 10
   AND source_number NOT GLOB '*[^0-9]*';
+
+
+SELECT
+  CASE
+    WHEN instr(original_filename, '_') > 0
+      THEN substr(original_filename, 1, instr(original_filename, '_') - 1)
+    ELSE original_filename
+  END AS filename_prefix,
+  COUNT(*) AS image_count
+FROM images
+GROUP BY filename_prefix
+ORDER BY image_count DESC;

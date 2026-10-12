@@ -5,6 +5,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ...db.models import AnalysisJob, PairwiseResult
 from ...db.session import get_session
 from ...services.dashboard_report_service import build_dashboard_summary, create_excel_report
+from ...services.relationship_policy import REPORTABLE_CLASSIFICATIONS
+from ...core.config import get_settings
 
 router = APIRouter(prefix="/dashboard", tags=["dashboard"])
 
@@ -13,8 +15,13 @@ router = APIRouter(prefix="/dashboard", tags=["dashboard"])
 async def dashboard(session: AsyncSession = Depends(get_session)) -> dict:
     summary = await build_dashboard_summary(session)
     total = summary["images_in_system"]
-    allowed = ["exact_file", "same_image", "edited_or_cropped"]
-    related = await session.scalar(select(func.count()).select_from(PairwiseResult).where(PairwiseResult.relationship_level.in_(allowed))) or 0
+    minimum_score = get_settings().relationship.report_min_relationship_score
+    related = await session.scalar(
+        select(func.count()).select_from(PairwiseResult).where(
+            PairwiseResult.relationship_level.in_(REPORTABLE_CLASSIFICATIONS),
+            PairwiseResult.relationship_score >= minimum_score,
+        )
+    ) or 0
     pending = await session.scalar(select(func.count()).select_from(AnalysisJob).where(AnalysisJob.status.not_in(["COMPLETED", "CANCELLED", "FAILED"]))) or 0
     failed = await session.scalar(select(func.count()).select_from(AnalysisJob).where(AnalysisJob.status == "FAILED")) or 0
     return {

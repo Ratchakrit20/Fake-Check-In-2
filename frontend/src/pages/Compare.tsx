@@ -539,7 +539,8 @@ export function Compare() {
                   <p className="eyebrow">ประเภทผลการตรวจ</p>
                   <h3>
                     {classificationLabels[result.classification] ??
-                      result.classification}
+                      result.classification} 
+                    [{result.score*100} %]
                   </h3>
                   <p className="eyebrow">ลักษณะที่ตรวจพบ</p>
                   <h3>{conclusion.title}</h3>

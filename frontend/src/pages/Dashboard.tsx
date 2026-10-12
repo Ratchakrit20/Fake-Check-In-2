@@ -172,7 +172,7 @@ export function Dashboard() {
               <p>เปรียบเทียบภาพทั้งหมดกับภาพที่พบว่าใช้ซ้ำ</p>
             </div>
           </div>
-          <label className="manual-total">
+          {/* <label className="manual-total">
             <span>ภาพทั้งหมด</span>
             <input
               type="number"
@@ -182,7 +182,7 @@ export function Dashboard() {
                 setTotalImages(Number(event.target.value) || 0)
               }
             />
-          </label>
+          </label> */}
           <div
             className={`dashboard-image-donuts ${activeJob ? "has-active-job" : ""}`}
           >

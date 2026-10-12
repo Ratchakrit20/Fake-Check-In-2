@@ -17,13 +17,11 @@ from ...db.models import ExportReport, ExportReportImage, ImageRecord, PairwiseR
 from ...db.session import get_session
 from ...services.relationship_graph_service import RelationshipGraphService
 from ...services.relationship_group_service import merge_group_indexes_by_bbid
+from ...services.relationship_policy import REPORTABLE_CLASSIFICATIONS
 from ...services.source_filename import parse_source_reference
 from ...storage.local_storage import LocalImageStorage
 
 router = APIRouter(prefix="/exports", tags=["exports"])
-
-# RELATED_CLASSIFICATIONS = ["exact_file", "same_image", "edited_or_cropped", "background_replaced", "repeated_checkin", "same_scene_new_capture"]
-RELATED_CLASSIFICATIONS = ["exact_file", "same_image", "edited_or_cropped"]
 
 class CreateExportRequest(BaseModel):
     customer_ids: list[str] = Field(min_length=1)
@@ -44,15 +42,16 @@ def image_technician(image: ImageRecord) -> str | None:
 async def related_groups(session: AsyncSession) -> list[list[ImageRecord]]:
     """Only components backed by a qualified detected relationship."""
     settings = get_settings()
+    minimum_score = settings.relationship.report_min_relationship_score
     images = list(await session.scalars(select(ImageRecord)))
     image_by_id = {image.id: image for image in images}
     pairs = list(await session.scalars(select(PairwiseResult).where(
-        PairwiseResult.relationship_level.in_(RELATED_CLASSIFICATIONS),
-        PairwiseResult.relationship_score >= settings.relationship.graph_edge_threshold,
+        PairwiseResult.relationship_level.in_(REPORTABLE_CLASSIFICATIONS),
+        PairwiseResult.relationship_score >= minimum_score,
     )))
     edges = RelationshipGraphService.qualified_edges(
         [(pair.image_a_id, pair.image_b_id, pair.relationship_score) for pair in pairs],
-        settings.relationship.graph_edge_threshold,
+        minimum_score,
     )
     components = [
         [image_by_id[image_id] for image_id in component]

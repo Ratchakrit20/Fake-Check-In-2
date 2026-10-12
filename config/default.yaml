@@ -71,6 +71,11 @@ relationship:
   high_threshold: 0.80
   possible_threshold: 0.65
   graph_edge_threshold: 0.65
+  # Optional score gate for Dashboard, Groups, and PDF Export after a pair has
+  # passed its classification rule.  0.00 = do not exclude by score (current).
+  # Raise to 0.30 for a light filter, or 0.65 for the previous stricter filter.
+  # Score is still saved and shown for audit/debugging at every setting.
+  report_min_relationship_score: 0.00
   partial_reuse_min_inliers: 30
   partial_reuse_min_inlier_ratio: 0.20
   background_replaced_min_embedding_similarity: 0.45

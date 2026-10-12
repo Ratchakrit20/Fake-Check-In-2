@@ -7,6 +7,7 @@ from ...db.models import ImageRecord, PairwiseResult
 from ...db.session import get_session
 from ...services.relationship_graph_service import RelationshipGraphService
 from ...services.relationship_group_service import merge_group_indexes_by_bbid
+from ...services.relationship_policy import REPORTABLE_CLASSIFICATIONS
 from ...services.source_filename import declared_source_id, parse_source_reference
 
 router = APIRouter(prefix="/groups", tags=["groups"])
@@ -17,24 +18,17 @@ async def groups(session: AsyncSession = Depends(get_session)) -> dict:
     settings = get_settings()
     image_records = list(await session.scalars(select(ImageRecord)))
     node_rows = [record.id for record in image_records]
-    allowed = [
-        "exact_file",
-        "same_image",
-        "edited_or_cropped",
-        "background_replaced",
-        "repeated_checkin",
-        "same_scene_new_capture",
-    ]
+    minimum_score = settings.relationship.report_min_relationship_score
     related_pairs = list(
         await session.scalars(
             select(PairwiseResult).where(
-                PairwiseResult.relationship_level.in_(allowed),
-                PairwiseResult.relationship_score >= settings.relationship.graph_edge_threshold,
+                PairwiseResult.relationship_level.in_(REPORTABLE_CLASSIFICATIONS),
+                PairwiseResult.relationship_score >= minimum_score,
             )
         )
     )
     scored_edges = [(pair.image_a_id, pair.image_b_id, pair.relationship_score) for pair in related_pairs]
-    edges = RelationshipGraphService.qualified_edges(scored_edges, settings.relationship.graph_edge_threshold)
+    edges = RelationshipGraphService.qualified_edges(scored_edges, minimum_score)
     components = RelationshipGraphService.connected_components(node_rows, edges)
     image_map = {record.id: record for record in image_records}
     relationship_groups = []
