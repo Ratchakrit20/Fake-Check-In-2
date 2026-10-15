@@ -12,8 +12,12 @@ router = APIRouter(prefix="/dashboard", tags=["dashboard"])
 
 
 @router.get("")
-async def dashboard(session: AsyncSession = Depends(get_session)) -> dict:
-    summary = await build_dashboard_summary(session)
+async def dashboard(
+    date_from: str | None = Query(default=None, pattern=r"^\d{8}$"),
+    date_to: str | None = Query(default=None, pattern=r"^\d{8}$"),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    summary = await build_dashboard_summary(session, date_from, date_to)
     total = summary["images_in_system"]
     minimum_score = get_settings().relationship.report_min_relationship_score
     related = await session.scalar(

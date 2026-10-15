@@ -8,6 +8,7 @@ import "./groups.css";
 import "./reanalyze.css";
 import "./progress.css";
 import "./theme.css";
+import "./insights-dashboard.css";
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <BrowserRouter>

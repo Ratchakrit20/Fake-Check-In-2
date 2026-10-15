@@ -10,12 +10,6 @@ _DATE_PATTERN = re.compile(
     r"(?:^|_)(?:new|ma-mat|ma-new|ma-splice)_(?P<date>\d{8}|null)(?:_|$)",
     re.IGNORECASE,
 )
-_DECLARED_SOURCE_PATTERN = re.compile(
-    r"(?:^|_)(?:home|splitter)_(\d{10})(?:_|$)",
-    re.IGNORECASE,
-)
-
-
 @dataclass(frozen=True)
 class SourceReference:
     """Work metadata encoded in a check-in filename."""
@@ -44,12 +38,3 @@ def parse_source_reference(filename: str) -> SourceReference | None:
         checkin_date=checkin_date,
         technician_id=match.group("technician_id"),
     )
-
-
-def declared_source_id(filename: str) -> str | None:
-    """Return the 10-digit source encoded after home_/splitter_, if present."""
-    reference = parse_source_reference(filename)
-    if reference:
-        return reference.job_number
-    match = _DECLARED_SOURCE_PATTERN.search(Path(filename).name)
-    return match.group(1) if match else None

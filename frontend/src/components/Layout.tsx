@@ -1,5 +1,6 @@
 import {
   Images,
+  ChartNoAxesCombined,
   LayoutDashboard,
   Layers3,
   ScanSearch,
@@ -8,7 +9,8 @@ import {
 import { NavLink, Outlet } from "react-router-dom";
 
 const items = [
-  ["/", "ภาพรวม", LayoutDashboard],
+  // ["/", "ภาพรวม", LayoutDashboard],
+  ["/", "Dashboard", ChartNoAxesCombined],
   ["/compare", "เปรียบเทียบภาพ", ScanSearch],
   ["/batch", "วิเคราะห์หลายภาพ", Images],
   ["/groups", "กลุ่มภาพที่ใช้ซ้ำ", Layers3],

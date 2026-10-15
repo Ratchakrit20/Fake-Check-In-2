@@ -9,10 +9,115 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..core.config import get_settings
 from ..db.models import ImageRecord, PairwiseResult
+from .relationship_group_service import build_reportable_groups
 from .relationship_policy import REPORTABLE_CLASSIFICATIONS
-from .source_filename import declared_source_id
+from .image_source_service import ResolvedImageSource, resolve_image_source
 
-async def build_dashboard_summary(session: AsyncSession) -> dict:
+
+def is_in_date_range(
+    checkin_date: str | None,
+    date_from: str | None,
+    date_to: str | None,
+) -> bool:
+    if checkin_date is None:
+        return date_from is None and date_to is None
+    return (date_from is None or checkin_date >= date_from) and (
+        date_to is None or checkin_date <= date_to
+    )
+
+
+def build_dashboard_insights(
+    selected_images: list[ImageRecord],
+    all_images: list[ImageRecord],
+    reused_image_ids: set[str],
+    source_by_image: dict[str, ResolvedImageSource],
+    pairs: list[PairwiseResult],
+    minimum_score: float,
+) -> dict:
+    """Aggregate chart and export-preview data from the same loaded records."""
+    daily: dict[str, dict] = {}
+    technician_customers: dict[str, set[str]] = {}
+    selected_ids = {image.id for image in selected_images}
+
+    for image in selected_images:
+        source = source_by_image[image.id]
+        checkin_date = source.checkin_date
+        if checkin_date:
+            row = daily.setdefault(
+                checkin_date,
+                {
+                    "date": checkin_date,
+                    "total_images": 0,
+                    "reused_images": 0,
+                    "customer_ids": set(),
+                    "reused_customer_ids": set(),
+                },
+            )
+            row["total_images"] += 1
+            if source.customer_id:
+                row["customer_ids"].add(source.customer_id)
+            if image.id in reused_image_ids:
+                row["reused_images"] += 1
+                if source.customer_id:
+                    row["reused_customer_ids"].add(source.customer_id)
+
+        if image.id in reused_image_ids and source.technician_id and source.customer_id:
+            technician_customers.setdefault(source.technician_id, set()).add(source.customer_id)
+
+    groups = build_reportable_groups(all_images, pairs, minimum_score)
+    selected_groups = [
+        group for group in groups if selected_ids.intersection({image.id for image in group})
+    ]
+    report_images = {
+        image.id: image
+        for group in selected_groups
+        for image in group
+    }
+    cross_date_images = [
+        image for image_id, image in report_images.items() if image_id not in selected_ids
+    ]
+    report_sources = [source_by_image[image.id] for image in report_images.values()]
+
+    return {
+        "daily": [
+            {
+                "date": date,
+                "total_images": row["total_images"],
+                "reused_images": row["reused_images"],
+                "total_customer_ids": len(row["customer_ids"]),
+                "reused_customer_ids": len(row["reused_customer_ids"]),
+            }
+            for date, row in sorted(daily.items())
+        ],
+        "technicians": [
+            {"technician_id": technician_id, "reused_customer_ids": len(customer_ids)}
+            for technician_id, customer_ids in sorted(
+                technician_customers.items(), key=lambda item: (-len(item[1]), item[0])
+            )
+        ],
+        "export_preview": {
+            "group_count": len(selected_groups),
+            "selected_images": len(selected_ids.intersection(reused_image_ids)),
+            "report_images": len(report_images),
+            "cross_date_images": len(cross_date_images),
+            "customer_ids": len({source.customer_id for source in report_sources if source.customer_id}),
+            "technician_ids": len({source.technician_id for source in report_sources if source.technician_id}),
+            "cross_dates": sorted(
+                {
+                    source_by_image[image.id].checkin_date
+                    for image in cross_date_images
+                    if source_by_image[image.id].checkin_date
+                }
+            ),
+        },
+    }
+
+
+async def build_dashboard_summary(
+    session: AsyncSession,
+    date_from: str | None = None,
+    date_to: str | None = None,
+) -> dict:
     minimum_score = get_settings().relationship.report_min_relationship_score
     images = list(await session.scalars(select(ImageRecord)))
     reused_pairs = list(
@@ -28,30 +133,36 @@ async def build_dashboard_summary(session: AsyncSession) -> dict:
         for pair in reused_pairs
         for image_id in (pair.image_a_id, pair.image_b_id)
     }
-    source_by_image = {
-        image.id: source_id
+    source_by_image = {image.id: resolve_image_source(image) for image in images}
+    selected_images = [
+        image
         for image in images
-        if (source_id := declared_source_id(image.original_filename)) is not None
+        if is_in_date_range(source_by_image[image.id].checkin_date, date_from, date_to)
+    ]
+    selected_source_by_image = {
+        image.id: source_by_image[image.id].customer_id
+        for image in selected_images
+        if source_by_image[image.id].customer_id is not None
     }
-    all_jobs = set(source_by_image.values())
+    all_jobs = set(selected_source_by_image.values())
     reused_jobs = {
-        source_by_image[image_id]
+        selected_source_by_image[image_id]
         for image_id in reused_image_ids
-        if image_id in source_by_image
+        if image_id in selected_source_by_image
     }
     pair_counts: Counter[str] = Counter()
     for pair in reused_pairs:
         pair_sources = {
-            source_by_image[image_id]
+            selected_source_by_image[image_id]
             for image_id in (pair.image_a_id, pair.image_b_id)
-            if image_id in source_by_image
+            if image_id in selected_source_by_image
         }
         pair_counts.update(pair_sources)
-    image_counts = Counter(source_by_image.values())
+    image_counts = Counter(selected_source_by_image.values())
     reused_image_counts = Counter(
-        source_by_image[image_id]
+        selected_source_by_image[image_id]
         for image_id in reused_image_ids
-        if image_id in source_by_image
+        if image_id in selected_source_by_image
     )
     duplicate_jobs = [
         {
@@ -63,11 +174,19 @@ async def build_dashboard_summary(session: AsyncSession) -> dict:
         for job_number in sorted(reused_jobs)
     ]
     return {
-        "images_in_system": len(images),
-        "reused_images": len(reused_image_ids),
+        "images_in_system": len(selected_images),
+        "reused_images": sum(image.id in reused_image_ids for image in selected_images),
         "total_jobs": len(all_jobs),
         "reused_jobs": len(reused_jobs),
         "duplicate_jobs": duplicate_jobs,
+        "insights": build_dashboard_insights(
+            selected_images,
+            images,
+            reused_image_ids,
+            source_by_image,
+            reused_pairs,
+            minimum_score,
+        ),
     }
 
 

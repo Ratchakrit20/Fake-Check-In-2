@@ -4,13 +4,15 @@ import { Batch } from "./pages/Batch";
 import { Compare } from "./pages/Compare";
 import { Dashboard } from "./pages/Dashboard";
 import { Groups } from "./pages/Groups";
+import { InsightsDashboard } from "./pages/InsightsDashboard";
 import { Placeholder } from "./pages/Placeholder";
 
 export function App() {
   return (
     <Routes>
       <Route element={<Layout />}>
-        <Route index element={<Dashboard />} />
+        {/* <Route index element={<Dashboard />} /> */}
+        <Route index element={<InsightsDashboard />} />
         <Route path="compare" element={<Compare />} />
         <Route path="batch" element={<Batch />} />
         <Route path="groups" element={<Groups />} />

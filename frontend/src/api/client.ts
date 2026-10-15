@@ -85,6 +85,11 @@ export async function exportBbidsPdf(customerIds: string[], dateFrom: string, da
   window.location.assign(`${API_ORIGIN}${payload.download_url}`);
 }
 
+/** Export every detected relationship group that has evidence in the date range. */
+export function exportDateRangePdf(dateFrom: string, dateTo: string): Promise<void> {
+  return exportBbidsPdf([], dateFrom, dateTo);
+}
+
 export type DashboardData = {
   total_images: number;
   related_pairs: number;
@@ -95,10 +100,34 @@ export type DashboardData = {
   total_jobs: number;
   reused_jobs: number;
   duplicate_jobs: Array<{ job_number: string; images_in_system: number; reused_images: number; evidence_links: number }>;
+  insights: DashboardInsights;
 };
 
-export async function getDashboard(): Promise<DashboardData> {
-  const response = await fetch(`${API}/dashboard`);
+export type DashboardInsights = {
+  daily: Array<{
+    date: string;
+    total_images: number;
+    reused_images: number;
+    total_customer_ids: number;
+    reused_customer_ids: number;
+  }>;
+  technicians: Array<{ technician_id: string; reused_customer_ids: number }>;
+  export_preview: {
+    group_count: number;
+    selected_images: number;
+    report_images: number;
+    cross_date_images: number;
+    customer_ids: number;
+    technician_ids: number;
+    cross_dates: string[];
+  };
+};
+
+export async function getDashboard(dateFrom?: string, dateTo?: string): Promise<DashboardData> {
+  const query = new URLSearchParams();
+  if (dateFrom) query.set("date_from", dateFrom);
+  if (dateTo) query.set("date_to", dateTo);
+  const response = await fetch(`${API}/dashboard${query.size ? `?${query}` : ""}`);
   if (!response.ok) throw new Error("โหลดข้อมูลสรุปไม่สำเร็จ");
   return response.json();
 }

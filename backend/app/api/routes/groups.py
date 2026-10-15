@@ -7,8 +7,8 @@ from ...db.models import ImageRecord, PairwiseResult
 from ...db.session import get_session
 from ...services.relationship_graph_service import RelationshipGraphService
 from ...services.relationship_group_service import merge_group_indexes_by_bbid
-from ...services.relationship_policy import REPORTABLE_CLASSIFICATIONS
-from ...services.source_filename import declared_source_id, parse_source_reference
+from ...services.relationship_policy import GROUP_CLASSIFICATIONS
+from ...services.image_source_service import resolve_image_source
 
 router = APIRouter(prefix="/groups", tags=["groups"])
 
@@ -22,7 +22,7 @@ async def groups(session: AsyncSession = Depends(get_session)) -> dict:
     related_pairs = list(
         await session.scalars(
             select(PairwiseResult).where(
-                PairwiseResult.relationship_level.in_(REPORTABLE_CLASSIFICATIONS),
+                PairwiseResult.relationship_level.in_(GROUP_CLASSIFICATIONS),
                 PairwiseResult.relationship_score >= minimum_score,
             )
         )
@@ -31,6 +31,7 @@ async def groups(session: AsyncSession = Depends(get_session)) -> dict:
     edges = RelationshipGraphService.qualified_edges(scored_edges, minimum_score)
     components = RelationshipGraphService.connected_components(node_rows, edges)
     image_map = {record.id: record for record in image_records}
+    source_map = {image_id: resolve_image_source(record) for image_id, record in image_map.items()}
     relationship_groups = []
     for index, component in enumerate(group for group in components if len(group) > 1):
         component_ids = set(component)
@@ -44,12 +45,9 @@ async def groups(session: AsyncSession = Depends(get_session)) -> dict:
                     {
                         "id": image_id,
                         "filename": image_map[image_id].original_filename,
-                        "technician_id": image_map[image_id].source_technician_id
-                        or (reference.technician_id if (reference := parse_source_reference(image_map[image_id].original_filename)) else None),
-                        "job_number": image_map[image_id].source_job_number
-                        or (reference.job_number if (reference := parse_source_reference(image_map[image_id].original_filename)) else None),
-                        "checkin_date": image_map[image_id].source_checkin_date
-                        or (reference.checkin_date if (reference := parse_source_reference(image_map[image_id].original_filename)) else None),
+                        "technician_id": source_map[image_id].technician_id,
+                        "job_number": source_map[image_id].customer_id,
+                        "checkin_date": source_map[image_id].checkin_date,
                         "width": image_map[image_id].width,
                         "height": image_map[image_id].height,
                         "url": f"/api/v1/images/{image_id}/content",

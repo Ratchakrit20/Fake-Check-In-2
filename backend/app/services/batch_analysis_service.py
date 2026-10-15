@@ -23,7 +23,7 @@ from ..storage.local_storage import LocalImageStorage
 from ..vector_store.faiss_store import FaissVectorStore
 from ..vector_store.phash_index import PerceptualHashIndex
 from .pair_analysis_service import PairAnalysisService
-from .source_filename import parse_source_reference
+from .image_source_service import resolve_image_source
 
 
 def same_submission(first: ImageRecord, second: ImageRecord) -> bool:
@@ -32,12 +32,14 @@ def same_submission(first: ImageRecord, second: ImageRecord) -> bool:
     Technician ID is retained only as source metadata. It must not influence
     candidate selection or create additional relationships.
     """
-    first_reference = parse_source_reference(first.original_filename)
-    second_reference = parse_source_reference(second.original_filename)
+    first_reference = resolve_image_source(first)
+    second_reference = resolve_image_source(second)
     return (
-        first_reference is not None
-        and second_reference is not None
-        and first_reference.job_number == second_reference.job_number
+        first_reference.customer_id is not None
+        and second_reference.customer_id is not None
+        and first_reference.checkin_date is not None
+        and second_reference.checkin_date is not None
+        and first_reference.customer_id == second_reference.customer_id
         and first_reference.checkin_date == second_reference.checkin_date
     )
 

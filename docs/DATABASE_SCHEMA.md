@@ -27,6 +27,12 @@ export_reports 1 ──< export_report_images >── 1 images
 
 `source_job_number` is displayed in the UI and PDF as **Customer ID**. The database column deliberately retains its old technical name so existing records and integrations continue to work.
 
+All API presentation layers resolve source metadata through
+`backend/app/services/image_source_service.py`. It reads persisted source
+columns first and falls back to `parse_source_reference()` only for historical
+records with missing values. This keeps Dashboard, Groups, Export PDF, and
+analysis submission checks consistent while retaining backward compatibility.
+
 ## Relationship eligibility and score policy
 
 Dashboard, Groups, and PDF Export use the same classification policy:

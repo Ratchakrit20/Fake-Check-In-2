@@ -20,6 +20,7 @@ import {
   getExportableBbids,
 } from "../api/client";
 import { formatDisplayDate } from "../utils/date";
+import { DonutChart } from "../components/dashboard/DonutChart";
 
 const fallback: DashboardData = {
   total_images: 0,
@@ -31,36 +32,20 @@ const fallback: DashboardData = {
   total_jobs: 0,
   reused_jobs: 0,
   duplicate_jobs: [],
+  insights: {
+    daily: [],
+    technicians: [],
+    export_preview: {
+      group_count: 0,
+      selected_images: 0,
+      report_images: 0,
+      cross_date_images: 0,
+      customer_ids: 0,
+      technician_ids: 0,
+      cross_dates: [],
+    },
+  },
 };
-
-function Donut({
-  value,
-  total,
-  label,
-}: {
-  value: number;
-  total: number;
-  label: string;
-}) {
-  const percent =
-    total > 0 ? Math.min(100, Math.round((value / total) * 100)) : 0;
-  return (
-    <div className="dashboard-donut-wrap">
-      <div
-        className="dashboard-donut"
-        style={{ "--percent": `${percent}%` } as React.CSSProperties}
-      >
-        <div>
-          <strong>{percent}%</strong>
-          <span>{label}</span>
-        </div>
-      </div>
-      <small>
-        {value.toLocaleString()} จาก {total.toLocaleString()}
-      </small>
-    </div>
-  );
-}
 
 export function Dashboard() {
   const navigate = useNavigate();
@@ -187,7 +172,7 @@ export function Dashboard() {
             className={`dashboard-image-donuts ${activeJob ? "has-active-job" : ""}`}
           >
             <div>
-              <Donut
+              <DonutChart
                 value={data.reused_images}
                 total={safeTotal}
                 label="ภาพใช้ซ้ำ"
@@ -204,7 +189,7 @@ export function Dashboard() {
             {activeJob && (
               <div className="dashboard-active-analysis">
                 <h3>กำลังตรวจสอบภาพ</h3>
-                <Donut
+                <DonutChart
                   value={activeJob.processed}
                   total={activeJob.total}
                   label="ตรวจแล้ว"
@@ -236,7 +221,7 @@ export function Dashboard() {
             <p>เปรียบเทียบ Customer ID ทั้งหมดกับ Customer ID ที่มีภาพใช้ซ้ำ</p>
             </div>
           </div>
-          <Donut
+          <DonutChart
             value={data.reused_jobs}
             total={data.total_jobs}
             label="Customer ID ที่ใช้ภาพซ้ำ"

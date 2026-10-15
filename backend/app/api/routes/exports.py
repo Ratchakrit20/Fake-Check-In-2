@@ -15,56 +15,28 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ...core.config import get_settings
 from ...db.models import ExportReport, ExportReportImage, ImageRecord, PairwiseResult
 from ...db.session import get_session
-from ...services.relationship_graph_service import RelationshipGraphService
-from ...services.relationship_group_service import merge_group_indexes_by_bbid
+from ...services.relationship_group_service import build_reportable_groups
 from ...services.relationship_policy import REPORTABLE_CLASSIFICATIONS
-from ...services.source_filename import parse_source_reference
+from ...services.image_source_service import resolve_image_source
 from ...storage.local_storage import LocalImageStorage
 
 router = APIRouter(prefix="/exports", tags=["exports"])
 
 class CreateExportRequest(BaseModel):
-    customer_ids: list[str] = Field(min_length=1)
+    customer_ids: list[str] = Field(default_factory=list)
     date_from: str
     date_to: str
-
-
-def image_source(image: ImageRecord) -> tuple[str | None, str | None]:
-    reference = parse_source_reference(image.original_filename)
-    return image.source_job_number or (reference.job_number if reference else None), image.source_checkin_date or (reference.checkin_date if reference else None)
-
-
-def image_technician(image: ImageRecord) -> str | None:
-    reference = parse_source_reference(image.original_filename)
-    return image.source_technician_id or (reference.technician_id if reference else None)
-
 
 async def related_groups(session: AsyncSession) -> list[list[ImageRecord]]:
     """Only components backed by a qualified detected relationship."""
     settings = get_settings()
     minimum_score = settings.relationship.report_min_relationship_score
     images = list(await session.scalars(select(ImageRecord)))
-    image_by_id = {image.id: image for image in images}
     pairs = list(await session.scalars(select(PairwiseResult).where(
         PairwiseResult.relationship_level.in_(REPORTABLE_CLASSIFICATIONS),
         PairwiseResult.relationship_score >= minimum_score,
     )))
-    edges = RelationshipGraphService.qualified_edges(
-        [(pair.image_a_id, pair.image_b_id, pair.relationship_score) for pair in pairs],
-        minimum_score,
-    )
-    components = [
-        [image_by_id[image_id] for image_id in component]
-        for component in RelationshipGraphService.connected_components(list(image_by_id), edges)
-        if len(component) > 1
-    ]
-    merged_indexes = merge_group_indexes_by_bbid(
-        [{job_number for image in component if (job_number := image_source(image)[0])} for component in components]
-    )
-    return [
-        [image for component_index in indexes for image in components[component_index]]
-        for indexes in merged_indexes
-    ]
+    return build_reportable_groups(images, pairs, minimum_score)
 
 
 @router.get("/bbids")
@@ -72,9 +44,16 @@ async def exportable_bbids(date_from: str, date_to: str, search: str = "", sessi
     by_bbid: dict[str, dict] = {}
     exported = {row[0] for row in (await session.execute(select(ExportReportImage.source_job_number))).all() if row[0]}
     for group in await related_groups(session):
-        group_customer_ids = sorted({customer_id for image in group if (customer_id := image_source(image)[0])})
+        group_customer_ids = sorted(
+            {
+                source.customer_id
+                for image in group
+                if (source := resolve_image_source(image)).customer_id
+            }
+        )
         for image in group:
-            job_number, checkin_date = image_source(image)
+            source = resolve_image_source(image)
+            job_number, checkin_date = source.customer_id, source.checkin_date
             if (
                 not job_number
                 or not checkin_date
@@ -104,9 +83,9 @@ async def create_export_pdf(request: CreateExportRequest, session: AsyncSession 
     selected_groups: list[tuple[str, list[ImageRecord]]] = []
     for index, group in enumerate(await related_groups(session), start=1):
         matches_selected_period = any(
-            (job_number := image_source(image)[0]) in selected_customer_ids
-            and (checkin_date := image_source(image)[1]) is not None
-            and request.date_from <= checkin_date <= request.date_to
+            (source := resolve_image_source(image)).checkin_date is not None
+            and request.date_from <= source.checkin_date <= request.date_to
+            and (not selected_customer_ids or source.customer_id in selected_customer_ids)
             for image in group
         )
         if matches_selected_period:
@@ -120,11 +99,17 @@ async def create_export_pdf(request: CreateExportRequest, session: AsyncSession 
             checkin_date
             for _, group in selected_groups
             for image in group
-            if (checkin_date := image_source(image)[1])
+            if (checkin_date := resolve_image_source(image).checkin_date)
         }
     )
     report_date_from = report_dates[0] if report_dates else request.date_from
     report_date_to = report_dates[-1] if report_dates else request.date_to
+    report_customer_ids = {
+        source.customer_id
+        for _, group in selected_groups
+        for image in group
+        if (source := resolve_image_source(image)).customer_id
+    }
     settings = get_settings()
     export_dir = Path(settings.storage.root) / "exports"
     export_dir.mkdir(parents=True, exist_ok=True)
@@ -181,7 +166,7 @@ async def create_export_pdf(request: CreateExportRequest, session: AsyncSession 
         canvas.setFont(thai_font, 10)
         canvas.drawString(margin, height - 111, f"Period: {period}")
         canvas.setFont(thai_bold_font, 10)
-        canvas.drawString(margin, height - 127, f"Customer ID selected: {len(selected_customer_ids)}")
+        canvas.drawString(margin, height - 127, f"Customer ID in report: {len(report_customer_ids)}")
         canvas.setFont(thai_font, 10)
         canvas.drawString(margin, height - 143, f"Export Date: {datetime.now().strftime('%d-%m-%Y')}")
         canvas.setFillColor(muted)
@@ -190,8 +175,24 @@ async def create_export_pdf(request: CreateExportRequest, session: AsyncSession 
         return height - 180
 
     def draw_group_heading(number: int, group: list[ImageRecord], y_position: float) -> float:
-        customer_ids = ", ".join(sorted({customer_id for image in group if (customer_id := image_source(image)[0])}))
-        technician_ids = ", ".join(sorted({technician_id for image in group if (technician_id := image_technician(image))}))
+        customer_ids = ", ".join(
+            sorted(
+                {
+                    source.customer_id
+                    for image in group
+                    if (source := resolve_image_source(image)).customer_id
+                }
+            )
+        )
+        technician_ids = ", ".join(
+            sorted(
+                {
+                    source.technician_id
+                    for image in group
+                    if (source := resolve_image_source(image)).technician_id
+                }
+            )
+        )
         canvas.setFillColor(orange)
         canvas.roundRect(margin, y_position - 4, 5, 30, 2, fill=1, stroke=0)
         canvas.setFillColor(green)
@@ -223,7 +224,8 @@ async def create_export_pdf(request: CreateExportRequest, session: AsyncSession 
                 width=card_width - 12, height=78, preserveAspectRatio=True,
                 anchor="c", mask="auto",
             )
-        job_number, checkin_date = image_source(image)
+        source = resolve_image_source(image)
+        job_number, checkin_date = source.customer_id, source.checkin_date
         canvas.setFillColor(green)
         canvas.setFont(thai_bold_font, 8)
         canvas.drawString(x + 7, y_position - 105, f"Customer ID: {job_number or '-'}")
@@ -257,8 +259,8 @@ async def create_export_pdf(request: CreateExportRequest, session: AsyncSession 
     report = ExportReport(id=report_id, date_from=report_date_from, date_to=report_date_to, pdf_path=str(pdf_path), created_at=datetime.utcnow())
     session.add(report)
     for image, group_id in report_images.values():
-        job_number, checkin_date = image_source(image)
-        session.add(ExportReportImage(export_report_id=report_id, image_id=image.id, source_job_number=job_number, source_checkin_date=checkin_date, source_technician_id=image_technician(image), group_id_snapshot=group_id))
+        source = resolve_image_source(image)
+        session.add(ExportReportImage(export_report_id=report_id, image_id=image.id, source_job_number=source.customer_id, source_checkin_date=source.checkin_date, source_technician_id=source.technician_id, group_id_snapshot=group_id))
     await session.commit()
     return {
         "report_id": report_id,
