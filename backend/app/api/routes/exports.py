@@ -132,6 +132,13 @@ async def create_export_pdf(request: CreateExportRequest, session: AsyncSession 
         compact = value.replace("-", "")
         return f"{compact[6:8]}-{compact[4:6]}-{compact[0:4]}" if len(compact) == 8 else value
 
+    def format_card_date(value: str | None) -> str:
+        """Use the Thai-friendly date format beneath each evidence image."""
+        if not value:
+            return "-"
+        compact = value.replace("-", "")
+        return f"{compact[6:8]}/{compact[4:6]}/{compact[0:4]}" if len(compact) == 8 else value
+
     def draw_thai_text(text: str, x: float, y: float, size: int, color: str) -> None:
         """Render Thai with Pillow's shaping engine, then place it in the PDF."""
         scale = 3
@@ -230,7 +237,7 @@ async def create_export_pdf(request: CreateExportRequest, session: AsyncSession 
         canvas.setFont(thai_bold_font, 8)
         canvas.drawString(x + 7, y_position - 105, f"Customer ID: {job_number or '-'}")
         canvas.setFont(thai_font, 8)
-        canvas.drawString(x + 7, y_position - 116, f"Date: {checkin_date or '-'}")
+        canvas.drawString(x + 7, y_position - 116, f"Date: {format_card_date(checkin_date)}")
         filename = image.original_filename
         canvas.setFillColor(muted)
         canvas.setFont(thai_font, 7)
