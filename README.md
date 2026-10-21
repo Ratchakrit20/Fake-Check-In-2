@@ -56,30 +56,35 @@ conda activate fake-check-in
 python -m pip install -e ".[dev]"
 ```
 
-## การรันแบบแยก Frontend และ Backend (Development)
+## การรันในเครื่อง (Development)
 
-ระบบแยกเป็น 2 process และติดต่อกันผ่าน HTTP API เท่านั้น:
+โหมดเริ่มต้นแยกการทำงานเป็นสามส่วน: React/Vite สำหรับหน้าเว็บ, FastAPI สำหรับ API และ local AI worker ซึ่ง API จะเปิดเป็น process แยกเมื่อมีงานวิเคราะห์ ทั้ง API และ worker ใช้ SQLite ไฟล์เดียวกันตามค่าเริ่มต้น จึงเป็นการแยก process บนเครื่องเดียว ไม่ใช่การแยกฐานข้อมูลหรือการ deploy ข้ามเครื่อง
 
-- **Backend API:** `http://127.0.0.1:8000` (เอกสาร API: `/docs`)
-- **Frontend:** `http://127.0.0.1:5173`
-
-เปิด terminal แรกที่ root ของโครงการ:
+เปิด terminal แรกที่ root ของโครงการเพื่อเริ่ม API:
 
 ```powershell
+cd D:\ratchakt\Fake-Check-In-2
 conda activate fake-check-in
 python -m backend.app.main
 ```
 
-เปิด terminal ที่สอง:
+หากยังไม่เคยติดตั้ง Frontend dependencies ให้รันครั้งเดียว:
 
 ```powershell
 cd frontend
 npm install
-npm run dev
-npm run dev -- --host 0.0.0.0
 ```
 
-Vite จะส่ง request ที่ขึ้นต้นด้วย `/api` ไปที่ Backend อัตโนมัติ จึงไม่ต้องตั้งค่า URL ใน browser และการแก้ไฟล์ frontend จะ refresh ให้ทันที
+จากนั้นเปิด terminal ที่สองเพื่อเริ่มหน้าเว็บ:
+
+```powershell
+cd frontend
+npm run dev
+```
+
+ใช้ URL ที่ Vite พิมพ์ใน terminal ซึ่งปกติคือ `http://localhost:5173` และอาจเปลี่ยนเป็น `5174` หากพอร์ตแรกถูกใช้แล้ว ในโหมด development หน้าเว็บเรียก `http://127.0.0.1:8000/api/v1` โดยตรง ตรวจ API ได้ที่ `/health` และเปิดเอกสาร endpoint ที่ `/docs`
+
+เมื่อส่งงานวิเคราะห์ API จะเปิด `backend.app.workers.local_worker` ให้อัตโนมัติ ไม่ต้องเปิด worker terminal เอง งานที่ยังไม่จบจะถูกกู้คืนจาก checkpoint เมื่อ API เริ่มต้นใหม่ และรายละเอียด log อยู่ที่ `output/worker-<job_id>.log` อย่าเปิด API ซ้ำบนพอร์ตเดิม หาก API กำลังทำงานอยู่แล้ว
 
 ## สร้าง Frontend สำหรับ Deploy
 
@@ -142,7 +147,7 @@ Dashboard แสดงกราฟสัดส่วนภาพ กราฟส
 
 ### วิเคราะห์หลายภาพ
 
-เลือกหลายไฟล์หรือทั้งโฟลเดอร์ได้สูงสุด 5,000 รูปต่อครั้ง รูปละไม่เกิน 5 MB และขนาดไฟล์รวมหน้าเว็บไม่เกิน 1,000 MB ปัจจุบันหน้าเว็บส่งไฟล์ทั้งหมดเป็น request เดียว จากนั้น Backend จึงสร้าง embedding เป็น batch และตรวจ Candidate เป็นชุด งานยังทำต่อเมื่อเปลี่ยนหน้า และหน้าเว็บเชื่อมกลับไปยังงานเดิมได้
+เลือกหลายไฟล์หรือทั้งโฟลเดอร์ได้สูงสุด 5,000 รูปต่อครั้ง รูปละไม่เกิน 5 MB และขนาดไฟล์รวมไม่เกิน 1,000 MB ปัจจุบันหน้าเว็บส่งไฟล์ทั้งหมดเป็น request เดียว จากนั้น AI worker จึงสร้าง embedding เป็น batch และตรวจ Candidate เป็นชุด งานยังทำต่อเมื่อเปลี่ยนหน้า และหน้าเว็บเชื่อมกลับไปยังงานเดิมได้
 
 FAISS และ pHash เป็นช่องค้นหา Candidate แยกกัน: FAISS เลือกภาพที่ embedding ใกล้เคียง ส่วน pHash สร้าง query ชั่วคราวสี่มุมแล้วค้นค่าใกล้เคียงจาก BK-tree หนึ่งต้นต่อหนึ่งงานวิเคราะห์ จึงไม่ต้องวนเทียบ pHash กับภาพทุกภาพ ค่า pHash ที่เก็บในฐานข้อมูลยังเป็นมุมปกติเพียงค่าหนึ่งต่อภาพ และ SIFT/RANSAC ยังคงเป็นผู้ยืนยันผลจริง
 
@@ -191,8 +196,8 @@ cd frontend
 npm run build
 ```
 
-## หมายเหตุ Production
+## หมายเหตุเรื่องฐานข้อมูลและ Production
 
-โหมดปัจจุบันเหมาะกับการพัฒนาและใช้งานเครื่องเดียว งาน AI ยังรันร่วมกับ Backend process การแยก Web VM และ AI VM ต้องเชื่อม Celery/Redis, Object Storage และฐานข้อมูลร่วมกันให้เสร็จก่อน รายละเอียดอยู่ใน [production.md](production.md)
+ค่าเริ่มต้นใน `config/default.yaml` ใช้ SQLite ที่ `data/app.db` และโหมด `JOBS__WORKER_MODE=process` ทำให้ API เปิด AI worker เป็น process แยก แต่ทั้งสอง process ยังใช้ฐานข้อมูล SQLite เดียวกัน การตั้งค่า Docker Compose เป็นอีกโหมดหนึ่ง: API และ Celery worker เชื่อม PostgreSQL/Redis และแชร์ volume ภาพ การเปิด Compose ไม่ได้ย้ายข้อมูลจาก SQLite ให้อัตโนมัติ จึงต้องวางแผน migration ก่อนสลับฐานข้อมูล ดูรายละเอียดใน [production.md](production.md)
 
 SSCD อาจต้องดาวน์โหลดโมเดลครั้งแรก หากเครื่องไม่มีอินเทอร์เน็ตต้องเตรียมไฟล์ไว้ล่วงหน้า ระบบไม่ใช้ paid API สำหรับการวิเคราะห์ภาพ

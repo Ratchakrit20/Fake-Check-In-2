@@ -226,3 +226,11 @@ new_20260813_splitter_1234567890_xxx_2.jpeg
 - เลขงานในชื่อไฟล์ใช้จัดระเบียบและลดงานคำนวณ ไม่ใช่หลักฐานเชิงภาพ
 - ผลประเภท “ควรตรวจสอบ” มีไว้ช่วยคัดกรองให้เจ้าหน้าที่ ไม่ใช่คำตัดสินบุคคลแบบเด็ดขาด
 - ควรปรับ threshold จากชุดทดสอบจริงหลายประเภท ไม่ควรจูนจากภาพตัวอย่างเพียงคู่เดียว
+
+## การแยก API, AI worker และฐานข้อมูล
+
+ในโหมดเครื่องเดียวที่ตั้งไว้เป็นค่าเริ่มต้น React ส่งคำขอไปยัง FastAPI; API บันทึก job แล้วเปิด `backend.app.workers.local_worker` เป็น process แยกเพื่อทำงานภาพหนัก Worker ใช้ service วิเคราะห์ชุดเดียวกับ API และบันทึก checkpoint/ผลผ่าน SQLAlchemy เหมือนกัน
+
+ค่าเริ่มต้นใน `config/default.yaml` คือ `JOBS__WORKER_MODE=process` และ `DATABASE__URL=sqlite+aiosqlite:///./data/app.db` ดังนั้น API กับ AI แยก process แต่ยังใช้ SQLite ไฟล์เดียวกัน มี process lock ต่อ job และ worker อ่านรายการภาพที่เสร็จแล้วเพื่อทำต่อเมื่อกู้คืนงาน
+
+โหมด Production ใน `docker-compose.yml` ตั้ง API, Celery worker, Redis และ PostgreSQL เป็น services แยกกัน การใช้โหมดนี้ไม่ได้ย้ายข้อมูลจาก `data/app.db` ให้อัตโนมัติ ต้อง migrate ข้อมูลและตรวจตำแหน่งไฟล์ภาพก่อนเปลี่ยน URL ฐานข้อมูล

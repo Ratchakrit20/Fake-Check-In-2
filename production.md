@@ -6,9 +6,9 @@
 
 หน้า React ทำหน้าที่รับไฟล์ แสดงสถานะ และแสดงผลเท่านั้น การวิเคราะห์ไม่ได้ทำใน browser
 
-ปัจจุบัน `POST /api/v1/batches` เรียก `run_batch_job` ผ่าน FastAPI `BackgroundTasks` ดังนั้นงาน SSCD, FAISS, SIFT, RANSAC และโมเดลอวัยวะยังทำงานในเครื่องและโปรเซสเดียวกับ API แม้โปรเจกต์จะมี Celery worker และ Redis แล้วก็ตาม Celery ปัจจุบันมีเพียง health-check และยังไม่ได้รับงานวิเคราะห์จริง
+ค่าเริ่มต้นใน `config/default.yaml` คือ `DATABASE__URL=sqlite+aiosqlite:///./data/app.db` และ `JOBS__WORKER_MODE=process`: API เปิด AI worker เป็น process แยกบนเครื่องเดียวกันและเขียน log แยกที่ `output/worker-<job_id>.log` ทั้งสอง process ใช้ SQLite ไฟล์เดียวกัน โหมด Production ใน `docker-compose.yml` ตั้ง `JOBS__WORKER_MODE=celery`: API ส่ง `analysis.process_batch` เข้า Redis และ Celery worker แยก service ทำงาน SSCD, FAISS, SIFT, RANSAC และโมเดลอวัยวะ โดย API อ่านสถานะจาก PostgreSQL ส่วน Redis เป็น queue ไม่ใช่ฐานข้อมูลผลวิเคราะห์ โหมด `inline` ยังมีไว้สำหรับทดสอบเท่านั้น
 
-โครงสร้างปัจจุบันเหมาะกับการพัฒนาและใช้งานในเครื่องเดียว แต่ยังไม่ควรนำ API และ AI ไปแยก VM จนกว่าจะเชื่อม batch job เข้าคิวงานแบบถาวร
+โหมด local และ production แยกงาน AI ออกจาก process ของ API แล้ว โหมด local ใช้ process lock ต่อ job และ resume จาก checkpoint; โหมด Production ใช้ Celery late-ack กับ Redis
 
 ## สถาปัตยกรรมที่แนะนำ
 
@@ -90,16 +90,16 @@ React ──poll job status──► FastAPI ──read──► PostgreSQL
 
 ## งานที่ต้องแก้ก่อนแยก VM
 
-1. สร้าง Celery task เช่น `analysis.process_batch(job_id, force=False)` ซึ่งเรียก `process_batch_job`
-2. เปลี่ยน batch routes จาก `BackgroundTasks` เป็น `celery_app.send_task` หรือ `delay`
-3. เลิก recovery งานค้างด้วย local thread ใน API และให้ Celery retry/ack เป็นผู้รับผิดชอบ
+1. ตั้ง `JOBS__WORKER_MODE=celery` ให้ API และ worker ใช้ค่าเดียวกัน
+2. ตรวจ late-ack/reject-on-worker-lost และยืนยันว่า worker ที่ตายทำให้ task กลับเข้าคิว
+3. เมื่อใช้ Celery แล้ว API จะไม่เปิด local recovery process เอง เพื่อป้องกันประมวลผล job ซ้ำ; ให้ Redis/Celery รับผิดชอบการส่งงานที่ยังไม่เสร็จกลับเข้าคิว
 4. เปลี่ยน `LocalImageStorage` เป็น S3/MinIO adapter
 5. ย้าย FAISS ออกจากไฟล์ local ที่เขียนร่วมกัน หรือกำหนดให้มี index-owner เพียง worker เดียว
 6. เพิ่ม distributed lock/idempotency เพื่อป้องกัน job เดียวถูกรันซ้ำ
 7. แยก image ของ API ออกจาก AI worker เพื่อไม่ติดตั้ง PyTorch/CUDA ใน Web VM
 8. เพิ่ม health/readiness checks แยก API, database, Redis, storage, GPU และ model
 
-ห้ามเพียงนำ API กับ worker ไปไว้คนละ VM โดยไม่แก้ storage และ queue เพราะ worker จะมองไม่เห็นไฟล์ local ของ API และงานปัจจุบันยังคงรันใน API อยู่
+โหมดเครื่องเดียวแยก API กับ AI worker เป็น process อยู่แล้ว แต่ทั้งคู่ยังใช้ SQLite และ local image storage ร่วมกัน การนำ API กับ worker ไปไว้คนละ VM ต้องเปลี่ยน queue เป็น Celery/Redis และเปลี่ยน storage เป็นที่เก็บไฟล์ร่วม เช่น S3/MinIO พร้อมตรวจการล็อก job ระหว่างเครื่อง
 
 ## การควบคุมจำนวน worker
 

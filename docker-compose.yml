@@ -8,11 +8,12 @@ services:
       APP__RELOAD: "false"
       JOBS__BROKER_URL: redis://redis:6379/0
       JOBS__RESULT_BACKEND: redis://redis:6379/1
+      JOBS__WORKER_MODE: celery
     volumes: ["image_data:/app/data"]
     depends_on: [postgres, redis]
   worker:
     build: .
-    command: python -m celery -A backend.app.workers.celery_app worker --loglevel=INFO
+    command: python -m celery -A backend.app.workers.celery_app worker --loglevel=INFO --concurrency=1
     environment:
       DATABASE__URL: postgresql+asyncpg://image_relation:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/image_relation
       JOBS__BROKER_URL: redis://redis:6379/0

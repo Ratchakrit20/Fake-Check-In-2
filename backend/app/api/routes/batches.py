@@ -1,8 +1,9 @@
 import io
 from pathlib import Path
-from uuid import uuid4
 from typing import cast
-from fastapi import APIRouter, BackgroundTasks, Depends, File, Request, HTTPException, UploadFile
+from uuid import uuid4
+
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, UploadFile
 from PIL import Image
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -12,8 +13,8 @@ from ...db.models import AnalysisJob, AnalysisJobItem, ImageRecord
 from ...db.session import get_session
 from ...detectors.perceptual_hash_detector import PerceptualHashDetector
 from ...detectors.sha256_detector import SHA256Detector
-from ...services.batch_analysis_service import run_batch_job
 from ...services.image_validation_service import ImageValidationService
+from ...services.job_dispatch_service import JobDispatchError, dispatch_batch_job
 from ...services.source_filename import parse_source_reference
 from ...storage.local_storage import LocalImageStorage
 
@@ -52,6 +53,7 @@ async def create_batch(
     validator = ImageValidationService(settings.app)
     storage = LocalImageStorage(settings.storage.root)
     phash_detector = PerceptualHashDetector(settings.phash.hash_size, settings.flip_detection.horizontal)
+    job_items: list[AnalysisJobItem] = []
     for position, file in enumerate(files):
         content = await file.read()
         metadata = validator.validate(content)
@@ -84,10 +86,20 @@ async def create_batch(
             analysis_status="QUEUED",
         )
         session.add(record)
-        await session.flush()
-        session.add(AnalysisJobItem(job_id=job.id, image_id=record.id, position=position, status="QUEUED"))
+        job_items.append(AnalysisJobItem(job_id=job.id, image_id=record.id, position=position, status="QUEUED"))
+    # Persist all image rows before creating rows that reference them. The
+    # duplicate lookup inside the loop can autoflush pending images, so defer
+    # AnalysisJobItem rows until the image inserts are complete.
+    await session.flush()
+    session.add_all(job_items)
     await session.commit()
-    background_tasks.add_task(run_batch_job, job.id)
+    try:
+        dispatch_batch_job(background_tasks, job.id)
+    except JobDispatchError as exc:
+        job.status = "FAILED"
+        job.error = str(exc)
+        await session.commit()
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     return {"job_id": job.id, "status": job.status, "file_count": len(files)}
 
 
@@ -109,5 +121,11 @@ async def reanalyze_library(background_tasks: BackgroundTasks, session: AsyncSes
         record.analysis_status = "QUEUED"
         session.add(AnalysisJobItem(job_id=job.id, image_id=record.id, position=position, status="QUEUED"))
     await session.commit()
-    background_tasks.add_task(run_batch_job, job.id, True)
+    try:
+        dispatch_batch_job(background_tasks, job.id, True)
+    except JobDispatchError as exc:
+        job.status = "FAILED"
+        job.error = str(exc)
+        await session.commit()
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     return {"job_id": job.id, "status": job.status, "file_count": len(records)}

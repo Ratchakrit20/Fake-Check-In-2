@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import io
 import json
+import logging
 from collections.abc import Iterable
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
@@ -22,8 +23,11 @@ from ..embeddings.sscd import SSCDEmbeddingProvider
 from ..storage.local_storage import LocalImageStorage
 from ..vector_store.faiss_store import FaissVectorStore
 from ..vector_store.phash_index import PerceptualHashIndex
-from .pair_analysis_service import PairAnalysisService
 from .image_source_service import resolve_image_source
+from .job_process_lock import job_process_lock
+from .pair_analysis_service import PairAnalysisService
+
+logger = logging.getLogger(__name__)
 
 
 def same_submission(first: ImageRecord, second: ImageRecord) -> bool:
@@ -86,6 +90,9 @@ async def _set_job(job_id: str, status: JobStatus, processed: int | None = None,
         now = datetime.now(UTC).replace(tzinfo=None)
         if status == JobStatus.EMBEDDING and job.started_at is None:
             job.started_at = now
+        if status not in {JobStatus.COMPLETED, JobStatus.CANCELLED, JobStatus.FAILED}:
+            job.completed_at = None
+            job.duration_seconds = None
         if status in {JobStatus.COMPLETED, JobStatus.CANCELLED, JobStatus.FAILED}:
             job.completed_at = now
             started_at = job.started_at or job.created_at
@@ -119,7 +126,9 @@ async def process_batch_job(job_id: str, force: bool = False) -> None:
     try:
         if await _cancel_requested(job_id):
             return
-        await _set_job(job_id, JobStatus.EMBEDDING, 0)
+        # Preserve the last persisted progress during recovery/resume. The
+        # completed item rows below are the checkpoint used to reconcile it.
+        await _set_job(job_id, JobStatus.EMBEDDING)
         async with SessionFactory() as session:
             items = list(
                 await session.scalars(
@@ -143,17 +152,26 @@ async def process_batch_job(job_id: str, force: bool = False) -> None:
             }
             vectors: dict[str, np.ndarray] = {}
             missing: list[ImageRecord] = []
+            item_image_ids = [item.image_id for item in items]
+            embedding_rows: list[ImageEmbedding] = []
+            # Keep each IN clause below SQLite's older parameter limit while
+            # replacing one database round trip per image with chunked reads.
+            for id_offset in range(0, len(item_image_ids), 500):
+                embedding_rows.extend(
+                    await session.scalars(
+                        select(ImageEmbedding).where(
+                            ImageEmbedding.image_id.in_(item_image_ids[id_offset : id_offset + 500]),
+                            ImageEmbedding.model_name == settings.embedding.model,
+                            ImageEmbedding.model_version == settings.embedding.version,
+                        )
+                    )
+                )
+            embeddings_by_image = {row.image_id: row for row in embedding_rows}
             for item in items:
                 record = all_records.get(item.image_id)
                 if record is None or record.id not in record_paths:
                     continue
-                embedding_row = await session.scalar(
-                    select(ImageEmbedding).where(
-                        ImageEmbedding.image_id == record.id,
-                        ImageEmbedding.model_name == settings.embedding.model,
-                        ImageEmbedding.model_version == settings.embedding.version,
-                    )
-                )
+                embedding_row = embeddings_by_image.get(record.id)
                 if embedding_row is None:
                     missing.append(record)
                 else:
@@ -161,6 +179,7 @@ async def process_batch_job(job_id: str, force: bool = False) -> None:
 
             batch_size = profile.embedding_batch_size
             missing = unique_records_by_id(missing)
+            embedding_rows_since_commit = 0
             for offset in range(0, len(missing), batch_size):
                 if await _cancel_requested(job_id):
                     return
@@ -181,6 +200,11 @@ async def process_batch_job(job_id: str, force: bool = False) -> None:
                             configuration_version=settings.configuration_version,
                         )
                     )
+                embedding_rows_since_commit += len(records_chunk)
+                if embedding_rows_since_commit >= 64:
+                    await session.commit()
+                    embedding_rows_since_commit = 0
+            if embedding_rows_since_commit:
                 await session.commit()
 
         vector_store.add_many([(image_id, vector) for image_id, vector in vectors.items()])
@@ -289,6 +313,17 @@ async def process_batch_job(job_id: str, force: bool = False) -> None:
                     ]
                     results = await asyncio.gather(*futures)
                     async with SessionFactory() as session:
+                        existing_pair_ids = {
+                            existing_ids[pair]
+                            for pair, _, _ in chunk
+                            if pair in existing_ids
+                        }
+                        existing_pairs = list(
+                            await session.scalars(
+                                select(PairwiseResult).where(PairwiseResult.id.in_(existing_pair_ids))
+                            )
+                        ) if existing_pair_ids else []
+                        existing_pairs_by_id = {row.id: row for row in existing_pairs}
                         for (pair, _, _), result in zip(chunk, results):
                             evidence = result.evidence
                             values = {
@@ -303,12 +338,10 @@ async def process_batch_job(job_id: str, force: bool = False) -> None:
                                 "details_json": json.dumps(result.model_dump(mode="json"), ensure_ascii=False),
                             }
                             existing_id = existing_ids.get(pair)
-                            existing_pair = await session.get(PairwiseResult, existing_id) if existing_id else None
+                            existing_pair = existing_pairs_by_id.get(existing_id) if existing_id else None
                             if existing_pair is None:
                                 existing_pair = PairwiseResult(image_a_id=pair[0], image_b_id=pair[1], **values)
                                 session.add(existing_pair)
-                                await session.flush()
-                                existing_ids[pair] = existing_pair.id
                             else:
                                 for field, value in values.items():
                                     setattr(existing_pair, field, value)
@@ -334,5 +367,10 @@ async def process_batch_job(job_id: str, force: bool = False) -> None:
         await _set_job(job_id, JobStatus.FAILED, error=str(exc))
 
 
-def run_batch_job(job_id: str, force: bool = False) -> None:
-    asyncio.run(process_batch_job(job_id, force=force))
+def run_batch_job(job_id: str, force: bool = False) -> bool:
+    with job_process_lock(job_id) as acquired:
+        if not acquired:
+            logger.info("job %s is already running in another process", job_id)
+            return False
+        asyncio.run(process_batch_job(job_id, force=force))
+        return True

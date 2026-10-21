@@ -6,7 +6,8 @@ from pathlib import Path
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from sqlalchemy import select
+from sqlalchemy import select, text
+from sqlalchemy.exc import SQLAlchemyError
 
 from .api.router import api_router
 from .core.config import ROOT, get_settings
@@ -15,14 +16,17 @@ from .core.logging import configure_logging
 from .core.runtime import detect_hardware
 from .db.models import AnalysisJob
 from .db.session import SessionFactory, init_database
-from .services.batch_analysis_service import run_batch_job
 
 settings = get_settings()
 configure_logging(settings.logging.level)
-hardware = detect_hardware(
-    settings.performance.cpu_workers,
-    settings.performance.opencv_threads,
-    settings.embedding.batch_size,
+hardware = (
+    detect_hardware(
+        settings.performance.cpu_workers,
+        settings.performance.opencv_threads,
+        settings.embedding.batch_size,
+    )
+    if settings.jobs.worker_mode == "inline"
+    else None
 )
 
 
@@ -70,15 +74,19 @@ class RequestSizeLimitMiddleware:
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
-    logging.getLogger(__name__).info(
-        "runtime profile: device=%s vram=%.2fGB cpu=%d pair_workers=%d opencv_threads=%d embedding_batch=%d",
-        hardware.device,
-        hardware.vram_gb,
-        hardware.logical_cpus,
-        hardware.pair_workers,
-        hardware.opencv_threads,
-        hardware.embedding_batch_size,
-    )
+    if hardware is not None:
+        logging.getLogger(__name__).info(
+            "runtime profile: device=%s vram=%.2fGB cpu=%d pair_workers=%d opencv_threads=%d embedding_batch=%d",
+            hardware.device,
+            hardware.vram_gb,
+            hardware.logical_cpus,
+            hardware.pair_workers,
+            hardware.opencv_threads,
+            hardware.embedding_batch_size,
+        )
+    else:
+        worker_label = "local process" if settings.jobs.worker_mode == "process" else "Celery workers"
+        logging.getLogger(__name__).info("runtime profile: AI processing is delegated to %s", worker_label)
     Path(settings.storage.root).mkdir(parents=True, exist_ok=True)
     await init_database()
     async with SessionFactory() as session:
@@ -87,7 +95,23 @@ async def lifespan(_: FastAPI):
                 select(AnalysisJob).where(AnalysisJob.status.not_in(["COMPLETED", "CANCELLED", "FAILED"]))
             )
         )
-    recovery_tasks = [asyncio.create_task(asyncio.to_thread(run_batch_job, job.id)) for job in interrupted]
+    if settings.jobs.worker_mode == "celery":
+        # Celery's late-ack delivery recovers worker crashes. Do not enqueue
+        # every active job on each API restart, which could duplicate work.
+        recovery_tasks = []
+    elif settings.jobs.worker_mode == "process":
+        from .services.job_dispatch_service import spawn_local_worker_process
+
+        for job in interrupted:
+            try:
+                spawn_local_worker_process(job.id)
+            except Exception:
+                logging.getLogger(__name__).exception("unable to recover analysis job %s", job.id)
+        recovery_tasks = []
+    else:
+        from .services.batch_analysis_service import run_batch_job
+
+        recovery_tasks = [asyncio.create_task(asyncio.to_thread(run_batch_job, job.id)) for job in interrupted]
     yield
     for task in recovery_tasks:
         task.cancel()
@@ -97,7 +121,10 @@ app = FastAPI(title=settings.app.name, version="0.1.0", lifespan=lifespan)
 app.add_middleware(RequestSizeLimitMiddleware, max_bytes=settings.app.max_request_size_mb * 1024 * 1024)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+    allow_origins=[
+        "http://localhost:5173", "http://127.0.0.1:5173",
+        "http://localhost:5174", "http://127.0.0.1:5174",
+    ],
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -126,18 +153,31 @@ async def security_headers(request: Request, call_next):
 
 @app.get("/health")
 async def health() -> dict:
-    return {
+    try:
+        async with SessionFactory() as session:
+            await session.execute(text("SELECT 1"))
+    except SQLAlchemyError as exc:
+        return {"status": "degraded", "database": "unavailable", "detail": str(exc)}
+    result = {
         "status": "ok",
+        "database": "ok",
+        "worker_mode": settings.jobs.worker_mode,
         "configuration_version": settings.configuration_version,
-        "runtime": {
+    }
+    if hardware is not None:
+        result["runtime"] = {
             "device": hardware.device,
             "vram_gb": hardware.vram_gb,
             "logical_cpus": hardware.logical_cpus,
             "pair_workers": hardware.pair_workers,
             "opencv_threads": hardware.opencv_threads,
             "embedding_batch_size": hardware.embedding_batch_size,
-        },
-    }
+        }
+    else:
+        result["runtime"] = {
+            "delegated_to": "local_process" if settings.jobs.worker_mode == "process" else "celery_worker"
+        }
+    return result
 
 
 if __name__ == "__main__":

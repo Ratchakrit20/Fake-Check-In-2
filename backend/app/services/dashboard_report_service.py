@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..core.config import get_settings
 from ..db.models import ImageRecord, PairwiseResult
-from .relationship_group_service import build_reportable_groups
+from .relationship_group_service import build_reportable_groups_as_of, merge_report_groups_by_customer
 from .relationship_policy import REPORTABLE_CLASSIFICATIONS
 from .image_source_service import ResolvedImageSource, resolve_image_source
 
@@ -33,6 +33,7 @@ def build_dashboard_insights(
     source_by_image: dict[str, ResolvedImageSource],
     pairs: list[PairwiseResult],
     minimum_score: float,
+    date_to: str | None = None,
 ) -> dict:
     """Aggregate chart and export-preview data from the same loaded records."""
     daily: dict[str, dict] = {}
@@ -64,10 +65,12 @@ def build_dashboard_insights(
         if image.id in reused_image_ids and source.technician_id and source.customer_id:
             technician_customers.setdefault(source.technician_id, set()).add(source.customer_id)
 
-    groups = build_reportable_groups(all_images, pairs, minimum_score)
-    selected_groups = [
+    # Match the PDF's as-of graph so future evidence cannot appear or bridge
+    # otherwise separate report groups in the preview.
+    groups = build_reportable_groups_as_of(all_images, pairs, minimum_score, date_to)
+    selected_groups = merge_report_groups_by_customer([
         group for group in groups if selected_ids.intersection({image.id for image in group})
-    ]
+    ])
     report_images = {
         image.id: image
         for group in selected_groups
@@ -186,6 +189,7 @@ async def build_dashboard_summary(
             source_by_image,
             reused_pairs,
             minimum_score,
+            date_to,
         ),
     }
 

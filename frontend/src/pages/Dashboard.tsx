@@ -18,6 +18,7 @@ import {
   getActiveJob,
   getDashboard,
   getExportableBbids,
+  getJobProgress,
 } from "../api/client";
 import { formatDisplayDate } from "../utils/date";
 import { DonutChart } from "../components/dashboard/DonutChart";
@@ -51,6 +52,8 @@ export function Dashboard() {
   const navigate = useNavigate();
   const [data, setData] = useState(fallback);
   const [activeJob, setActiveJob] = useState<BatchJob | null>(null);
+  const [dashboardLoaded, setDashboardLoaded] = useState(false);
+  const [apiError, setApiError] = useState("");
   const [exportItems, setExportItems] = useState<ExportableBbid[]>([]);
   const [selectedBbids, setSelectedBbids] = useState<string[]>([]);
   const [exportSearch, setExportSearch] = useState("");
@@ -67,14 +70,23 @@ export function Dashboard() {
         .then((result) => {
           if (!active) return;
           setData(result);
+          setDashboardLoaded(true);
+          setApiError("");
           setTotalImages((current) => current || result.images_in_system);
         })
-        .catch(() => undefined);
+        .catch((reason) => {
+          if (active) setApiError(reason instanceof Error ? reason.message : "โหลดข้อมูลจาก API ไม่สำเร็จ");
+        });
       void getActiveJob()
         .then((result) => {
-          if (active) setActiveJob(result);
+          if (active) {
+            setActiveJob(result);
+            setApiError("");
+          }
         })
-        .catch(() => undefined);
+        .catch((reason) => {
+          if (active) setApiError(reason instanceof Error ? reason.message : "โหลดสถานะงานจาก API ไม่สำเร็จ");
+        });
     };
     void load();
     const timer = window.setInterval(load, 10000);
@@ -138,6 +150,11 @@ export function Dashboard() {
           {/* <p>ข้อมูลจะอัปเดตจากผลประมวลผลล่าสุดอัตโนมัติทุก 10 วินาที</p> */}
         </div>
       </header>
+      {apiError && (
+        <div className="error" role="alert">
+          โหลดข้อมูลจาก API ไม่สำเร็จ ({apiError}) ตัวเลขด้านล่างอาจยังไม่ใช่ข้อมูลล่าสุด
+        </div>
+      )}
       <div className="metric-grid">
         {cards.map(([label, value, Icon, color]) => (
           <article className="metric" key={label}>
@@ -145,7 +162,7 @@ export function Dashboard() {
               <Icon size={21} />
             </div>
             <span>{label}</span>
-            <strong>{value.toLocaleString()}</strong>
+            <strong>{dashboardLoaded ? value.toLocaleString() : "—"}</strong>
           </article>
         ))}
       </div>
@@ -190,9 +207,9 @@ export function Dashboard() {
               <div className="dashboard-active-analysis">
                 <h3>กำลังตรวจสอบภาพ</h3>
                 <DonutChart
-                  value={activeJob.processed}
-                  total={activeJob.total}
-                  label="ตรวจแล้ว"
+                  value={getJobProgress(activeJob)}
+                  total={100}
+                  label="ความคืบหน้า"
                 />
                 <div className="dashboard-legend">
                   <span>

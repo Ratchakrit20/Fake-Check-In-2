@@ -16,6 +16,15 @@ def test_default_config_is_valid():
     assert settings.embedding.provider == "sscd"
     assert len(settings.embedding.model_sha256) == 64
     assert settings.vector_search.top_k == 30
+    assert settings.jobs.worker_mode == "process"
+
+
+def test_celery_worker_mode_is_configurable():
+    data = config_data()
+    for mode in ("inline", "process", "celery"):
+        data = config_data()
+        data["jobs"]["worker_mode"] = mode
+        assert Settings.model_validate(data).jobs.worker_mode == mode
 
 
 def test_invalid_threshold_order_fails_fast():

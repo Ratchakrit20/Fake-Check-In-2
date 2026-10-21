@@ -73,8 +73,8 @@ export async function getExportableBbids(dateFrom: string, dateTo: string, searc
   return response.json();
 }
 
-export async function exportBbidsPdf(customerIds: string[], dateFrom: string, dateTo: string): Promise<void> {
-  const response = await fetch(`${API}/exports/pdf`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ customer_ids: customerIds, date_from: dateFrom, date_to: dateTo }) });
+export async function exportBbidsPdf(customerIds: string[], dateFrom: string, dateTo: string, includeTechnicianSummary = false): Promise<void> {
+  const response = await fetch(`${API}/exports/pdf`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ customer_ids: customerIds, date_from: dateFrom, date_to: dateTo, include_technician_summary: includeTechnicianSummary }) });
   if (!response.ok) {
     const error = await response.json().catch(() => ({ detail: "สร้าง PDF ไม่สำเร็จ" }));
     throw new Error(error.detail ?? "สร้าง PDF ไม่สำเร็จ");
@@ -87,7 +87,7 @@ export async function exportBbidsPdf(customerIds: string[], dateFrom: string, da
 
 /** Export every detected relationship group that has evidence in the date range. */
 export function exportDateRangePdf(dateFrom: string, dateTo: string): Promise<void> {
-  return exportBbidsPdf([], dateFrom, dateTo);
+  return exportBbidsPdf([], dateFrom, dateTo, true);
 }
 
 export type DashboardData = {
@@ -156,7 +156,19 @@ export async function reanalyzeLibrary(): Promise<{ job_id: string; status: stri
   return response.json();
 }
 
-export type BatchJob = { id: string; status: string; total: number; processed: number; error: string | null; started_at?: string | null; completed_at?: string | null; duration_seconds?: number | null };
+export type BatchJob = { id: string; status: string; total: number; processed: number; embedded?: number; error: string | null; started_at?: string | null; completed_at?: string | null; duration_seconds?: number | null };
+
+export function getJobProgress(job: BatchJob): number {
+  const total = Math.max(1, job.total);
+  if (job.status === "COMPLETED") return 100;
+  if (job.status === "EMBEDDING") {
+    return Math.round(Math.min(1, Math.max(0, (job.embedded ?? 0) / total)) * 50);
+  }
+  if (job.status === "VERIFYING") {
+    return 50 + Math.round(Math.min(1, Math.max(0, job.processed / total)) * 50);
+  }
+  return Math.round(Math.min(1, Math.max(0, job.processed / total)) * 100);
+}
 
 export async function getJob(jobId: string): Promise<BatchJob> {
   const response = await fetch(`${API}/jobs/${jobId}`);

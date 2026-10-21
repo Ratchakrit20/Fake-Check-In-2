@@ -1,13 +1,15 @@
 .insights-dashboard { display: grid; gap: 18px; }
 .insights-head { margin-bottom: 4px; }
-.insight-refresh, .insight-filter-panel button { border: 1px solid #cfe0d5; background: #fff; color: #286245; border-radius: 8px; padding: 9px 12px; font: inherit; font-size: 12px; font-weight: 700; cursor: pointer; }
+.insight-refresh, .insight-filter-panel button, .export-date-filter button { border: 1px solid #cfe0d5; background: #fff; color: #286245; border-radius: 8px; padding: 9px 12px; font: inherit; font-size: 12px; font-weight: 700; cursor: pointer; }
 .insight-refresh { display: flex; align-items: center; gap: 7px; }
 .insight-filter-panel { display: flex; align-items: end; gap: 12px; padding-block: 16px; }
 .insight-filter-title { display: flex; align-items: center; gap: 9px; color: #176b4c; margin-right: auto; }
 .insight-filter-title strong, .insight-filter-title span { display: block; }
 .insight-filter-title span { color: #72867c; font-size: 11px; margin-top: 2px; }
-.insight-filter-panel label { display: grid; gap: 4px; color: #547265; font-size: 11px; font-weight: 700; }
-.insight-filter-panel input { min-height: 38px; border: 1px solid #cfe0d5; border-radius: 8px; padding-inline: 9px; color: #193a2d; font: inherit; }
+.insight-filter-panel label, .export-date-filter label { display: grid; gap: 4px; color: #547265; font-size: 11px; font-weight: 700; }
+.insight-filter-panel input, .export-date-filter input { min-height: 38px; border: 1px solid #cfe0d5; border-radius: 8px; padding-inline: 9px; color: #193a2d; font: inherit; }
+.export-date-filter { display: flex; align-items: end; gap: 12px; margin-top: 18px; padding: 14px 16px; border: 1px solid #e0ebe3; border-radius: 10px; background: #f7faf8; }
+.export-date-filter button:disabled { opacity: .5; cursor: default; }
 .active-job-panel { display: flex; align-items: center; justify-content: space-between; min-height: 210px; background: linear-gradient(135deg, #eef9f2, #fff8e9); border-color: #cce4d6; }
 .active-job-panel h2 { margin: 3px 0; color: #12372a; }
 .active-job-panel .dashboard-donut-wrap { margin: 0 32px 0 0; }
@@ -52,5 +54,5 @@
 .export-preview-stats strong { color: #126b4d; font-size: 23px; margin-top: 4px; }
 .cross-date-note { margin: 15px 0 0 !important; padding: 10px 12px; border-left: 3px solid #f59e0b; background: #fff8e9; color: #86602b !important; font-size: 12px; }
 .insight-empty { margin-top: 18px; padding: 32px; text-align: center; border-radius: 9px; background: #f7faf8; color: #7a8981; font-size: 13px; }
-@media (max-width: 900px) { .insight-filter-panel { align-items: stretch; flex-wrap: wrap; } .insight-filter-title { width: 100%; } .export-preview-stats { grid-template-columns: repeat(3, 1fr); } .export-preview-stats div:nth-child(3) { border-right: 0; } }
+@media (max-width: 900px) { .insight-filter-panel, .export-date-filter { align-items: stretch; flex-wrap: wrap; } .insight-filter-title { width: 100%; } .export-preview-stats { grid-template-columns: repeat(3, 1fr); } .export-preview-stats div:nth-child(3) { border-right: 0; } }
 @media (max-width: 720px) { .insight-donut-grid, .insight-chart-grid { grid-template-columns: 1fr; } .active-job-panel, .export-preview-panel .panel-head { align-items: flex-start; flex-direction: column; } .active-job-panel .dashboard-donut-wrap { margin: 0 auto; } .export-preview-stats { grid-template-columns: repeat(2, 1fr); } .export-preview-stats div:nth-child(odd) { border-right: 1px solid #e0ebe3; } .technician-bars li { grid-template-columns: 95px 1fr 36px; gap: 8px; } }

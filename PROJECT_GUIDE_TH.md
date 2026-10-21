@@ -39,7 +39,7 @@ SIFT จับรายละเอียดเฉพาะจุด + RANSAC �
 โมเดล mask แยกอวัยวะ (GPU เมื่อใช้ได้)
         |
         v
-รวมคะแนน/จำแนกผล -> บันทึก SQLite -> สร้างกลุ่มแบบเชื่อมโยงทางอ้อม
+รวมคะแนน/จำแนกผล -> บันทึกฐานข้อมูลที่ตั้งค่า (SQLite เป็นค่าเริ่มต้น) -> สร้างกลุ่มแบบเชื่อมโยงทางอ้อม
 ```
 
 การจัดกลุ่มความสัมพันธ์ใช้ connected components เช่น 1 เชื่อม 2, 1 เชื่อม 3 และ 3 เชื่อม 4 ระบบจะรวม 1, 2, 3, 4 เป็นกลุ่มย่อยเดียว แม้ 1 จะไม่เชื่อมกับ 4 โดยตรง
@@ -66,7 +66,7 @@ SIFT จับรายละเอียดเฉพาะจุด + RANSAC �
 ```text
 fake ckeck in/
 ├─ backend/app/
-│  ├─ main.py                     เริ่ม FastAPI, เตรียมฐานข้อมูล, กู้คืนงานค้าง และเสิร์ฟหน้าเว็บ
+│  ├─ main.py                     เริ่ม FastAPI, เตรียมฐานข้อมูล และส่ง job ที่ค้างให้ worker กู้คืน
 │  ├─ api/
 │  │  ├─ router.py                รวม API ทุกหมวดภายใต้ /api/v1
 │  │  └─ routes/
@@ -83,7 +83,7 @@ fake ckeck in/
 │  │  └─ logging.py               ตั้งค่า log
 │  ├─ db/
 │  │  ├─ models.py                ตาราง images, embeddings, pairwise results และ jobs
-│  │  └─ session.py               SQLAlchemy async, SQLite WAL และ connection settings
+│  │  └─ session.py               SQLAlchemy async; SQLite ใช้ WAL และรองรับ PostgreSQL ผ่าน URL
 │  ├─ detectors/
 │  │  ├─ sha256_detector.py       ตรวจไฟล์ที่เหมือนกันทุกไบต์
 │  │  ├─ perceptual_hash_detector.py สร้าง pHash สำหรับภาพปกติ กลับด้าน และช่วยเลือกมุมหมุน
@@ -98,6 +98,9 @@ fake ckeck in/
 │  │  ├─ faiss_store.py           เก็บ/ค้นเวกเตอร์ใกล้เคียงและบันทึก index
 │  │  └─ phash_index.py           BK-tree สำหรับค้น pHash ใกล้เคียงโดย Hamming distance
 │  ├─ services/
+│  │  ├─ job_dispatch_service.py  เปิด local worker หรือส่งงานเข้า Celery ตามโหมด
+│  │  ├─ job_process_lock.py      ป้องกัน local worker หลายตัวรับ job เดียวกัน
+│  ├─ workers/                    local process worker และ Celery task
 │  │  ├─ pair_analysis_service.py รวม detector เพื่อวิเคราะห์ภาพหนึ่งคู่
 │  │  ├─ relationship_scorer.py   รวมหลักฐานและกำหนดคำตัดสิน
 │  │  ├─ batch_analysis_service.py จัด embedding, candidate, parallel verification และบันทึกผล
@@ -114,7 +117,7 @@ fake ckeck in/
 │  └─ pages/                      ภาพรวม, เปรียบเทียบ, หลายภาพ และกลุ่มภาพ
 ├─ config/default.yaml            ค่าระบบ เกณฑ์ และ performance
 ├─ data/images/                   ไฟล์ภาพที่ระบบจัดเก็บ
-├─ data/app.db                    ฐานข้อมูล SQLite
+├─ data/app.db                    ฐานข้อมูล SQLite สำหรับโหมดเครื่องเดียวโดยค่าเริ่มต้น
 ├─ data/faiss/                    FAISS index และรายการ image id
 ├─ data/models/                   SSCD และโมเดลแยกอวัยวะ
 ├─ tests/                         unit tests
@@ -177,16 +180,28 @@ npm run build
 cd ..
 ```
 
-หลัง build แล้ว ผู้ใช้งานรันด้วย Python เพียงคำสั่งเดียว
+การ build Frontend สร้างไฟล์ static ใน `frontend/dist`; FastAPI ไม่ได้เสิร์ฟไฟล์หน้าเว็บในโหมด Development จึงต้องเปิด API และ Vite แยกกัน
 
 ### 5.6 เริ่มระบบ
 
 ```powershell
+cd D:\ratchakt\Fake-Check-In-2
 conda activate fake-check-in
 python -m backend.app.main
 ```
 
-เปิด http://127.0.0.1:8000 และ API docs ที่ http://127.0.0.1:8000/docs
+เปิด terminal ที่สอง:
+
+```powershell
+cd D:\ratchakt\Fake-Check-In-2\frontend
+npm run dev
+```
+
+ใช้ URL ที่ Vite แสดงใน terminal (ปกติ `http://localhost:5173`; ถ้าพอร์ตไม่ว่างอาจเป็น `5174`) หน้าเว็บ Development เรียก API ที่ `http://127.0.0.1:8000/api/v1` โดยตรง ตรวจ API ได้ที่ http://127.0.0.1:8000/health และดู endpoints ที่ http://127.0.0.1:8000/docs
+
+ค่าเริ่มต้น `JOBS__WORKER_MODE=process` ทำให้ API เปิด local AI worker แยก process เมื่อเริ่ม batch, resume หรือกู้คืน job ที่ยังไม่จบตอน API เริ่มใหม่ ไม่ต้องเปิด worker แยกด้วยตนเอง Log อยู่ใน `output/worker-<job_id>.log` ทั้ง API และ worker ใช้ฐานข้อมูลตาม `DATABASE__URL`; ค่าเริ่มต้นยังเป็น SQLite ไฟล์ `data/app.db` ร่วมกัน
+
+Docker Compose กำหนด API + Celery worker + Redis + PostgreSQL แยกบริการ แต่จะเชื่อม PostgreSQL คนละฐานกับ SQLite เริ่มต้น การเริ่ม Compose ไม่ได้ย้ายข้อมูลเดิม ต้องทำ migration และตรวจ storage ก่อนสลับไปใช้
 
 ## 6. การย้ายข้อมูลจากเครื่องเดิม
 
@@ -208,7 +223,7 @@ python -m backend.app.main
 
 ### วิเคราะห์หลายภาพ
 
-เข้าเมนู “วิเคราะห์หลายภาพ” เลือกหลายไฟล์หรือโฟลเดอร์ แล้วเริ่มวิเคราะห์ สามารถเลือกได้สูงสุด 5,000 รูปต่อครั้ง รูปละไม่เกิน 5 MB และรวมไม่เกิน 1,000 MB หน้าเว็บยังส่งทั้งหมดเป็น request เดียว ส่วน Backend แบ่ง embedding และการตรวจคู่เป็นชุดภายใน สามารถเปลี่ยนหน้า/รีเฟรชได้ งานไม่เริ่มใหม่และหน้าเว็บจะเชื่อมกลับไปยังงานเดิม
+เข้าเมนู “วิเคราะห์หลายภาพ” เลือกหลายไฟล์หรือโฟลเดอร์ แล้วเริ่มวิเคราะห์ สามารถเลือกได้สูงสุด 5,000 รูปต่อครั้ง รูปละไม่เกิน 5 MB และรวมไม่เกิน 1,000 MB หน้าเว็บส่งทั้งหมดเป็น request เดียว ส่วน AI worker แยก process จะสร้าง embedding และตรวจคู่เป็นชุดภายใน สามารถเปลี่ยนหน้า/รีเฟรชได้ งานไม่เริ่มใหม่และหน้าเว็บจะเชื่อมกลับไปยังงานเดิม
 
 ### วิเคราะห์ข้อมูลเดิมใหม่
 

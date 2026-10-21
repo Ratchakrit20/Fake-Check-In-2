@@ -1,2 +1,3 @@
+# Editable install from pyproject.toml, including test/lint tools for development.
 -e .[dev]
 

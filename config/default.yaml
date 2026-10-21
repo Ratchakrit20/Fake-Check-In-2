@@ -122,11 +122,12 @@ jobs:
   broker_url: redis://localhost:6379/0
   result_backend: redis://localhost:6379/1
   worker_count: 2
+  worker_mode: process # Run AI in a separate local process; production can use Celery.
 performance:
   auto_tune: true
-  cpu_workers: 0 # 0 = เลือกอัตโนมัติจากจำนวนคอร์
-  opencv_threads: 0 # 0 = แบ่ง thread ให้เหมาะกับจำนวน worker
-  pair_chunk_size: 16
+  cpu_workers: 0 # Choose workers from available CPU cores
+  opencv_threads: 0 # Divide OpenCV threads across pair workers automatically
+  pair_chunk_size: 64
   candidate_min_similarity: 0.40   # SSCD candidate gate; การตัดสินจริงยังต้องผ่าน geometry
 logging:
   level: INFO

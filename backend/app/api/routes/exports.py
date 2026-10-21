@@ -15,7 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ...core.config import get_settings
 from ...db.models import ExportReport, ExportReportImage, ImageRecord, PairwiseResult
 from ...db.session import get_session
-from ...services.relationship_group_service import build_reportable_groups
+from ...services.relationship_group_service import build_reportable_groups, build_reportable_groups_as_of, merge_report_groups_by_customer
 from ...services.relationship_policy import REPORTABLE_CLASSIFICATIONS
 from ...services.image_source_service import resolve_image_source
 from ...storage.local_storage import LocalImageStorage
@@ -26,8 +26,24 @@ class CreateExportRequest(BaseModel):
     customer_ids: list[str] = Field(default_factory=list)
     date_from: str
     date_to: str
+    include_technician_summary: bool = False
 
-async def related_groups(session: AsyncSession) -> list[list[ImageRecord]]:
+
+def technician_customer_counts(selected_groups: list[list[ImageRecord]], all_groups: list[list[ImageRecord]]) -> dict[str, set[str]]:
+    """Count customers on qualifying images, without inferring new relationships."""
+    technicians = {
+        source.technician_id for group in selected_groups for image in group
+        if (source := resolve_image_source(image)).technician_id
+    }
+    result: dict[str, set[str]] = {technician: set() for technician in technicians}
+    for group in all_groups:
+        for image in group:
+            source = resolve_image_source(image)
+            if source.technician_id in result and source.customer_id:
+                result[source.technician_id].add(source.customer_id)
+    return result
+
+async def related_groups(session: AsyncSession, merge_by_customer: bool = True) -> list[list[ImageRecord]]:
     """Only components backed by a qualified detected relationship."""
     settings = get_settings()
     minimum_score = settings.relationship.report_min_relationship_score
@@ -36,7 +52,7 @@ async def related_groups(session: AsyncSession) -> list[list[ImageRecord]]:
         PairwiseResult.relationship_level.in_(REPORTABLE_CLASSIFICATIONS),
         PairwiseResult.relationship_score >= minimum_score,
     )))
-    return build_reportable_groups(images, pairs, minimum_score)
+    return build_reportable_groups(images, pairs, minimum_score, merge_by_customer=merge_by_customer)
 
 
 @router.get("/bbids")
@@ -81,7 +97,19 @@ async def create_export_pdf(request: CreateExportRequest, session: AsyncSession 
         raise HTTPException(status_code=503, detail="PDF support is not installed; run python -m pip install -e .") from exc
     selected_customer_ids = set(request.customer_ids)
     selected_groups: list[tuple[str, list[ImageRecord]]] = []
-    for index, group in enumerate(await related_groups(session), start=1):
+    # Load the graph data once. Keep the all-time graph for technician totals,
+    # but select PDF evidence from the graph as of the requested date.
+    settings = get_settings()
+    minimum_score = settings.relationship.report_min_relationship_score
+    images = list(await session.scalars(select(ImageRecord)))
+    pairs = list(await session.scalars(select(PairwiseResult).where(
+        PairwiseResult.relationship_level.in_(REPORTABLE_CLASSIFICATIONS),
+        PairwiseResult.relationship_score >= minimum_score,
+    )))
+    all_groups = build_reportable_groups(images, pairs, minimum_score, merge_by_customer=False)
+    report_groups = build_reportable_groups_as_of(images, pairs, minimum_score, request.date_to)
+    matching_groups = []
+    for group in report_groups:
         matches_selected_period = any(
             (source := resolve_image_source(image)).checkin_date is not None
             and request.date_from <= source.checkin_date <= request.date_to
@@ -89,9 +117,12 @@ async def create_export_pdf(request: CreateExportRequest, session: AsyncSession 
             for image in group
         )
         if matches_selected_period:
-            # The selected BBID only chooses a group. Every image in that
-            # group remains in the PDF so the visual relationship is complete.
-            selected_groups.append((f"group-{index}", group))
+            # Selection chooses a group; its evidence is limited to the
+            # selected date and earlier dates by related_groups_as_of().
+            matching_groups.append(group)
+    if request.include_technician_summary:
+        matching_groups = merge_report_groups_by_customer(matching_groups)
+    selected_groups = [(f"group-{index}", group) for index, group in enumerate(matching_groups, start=1)]
     if not selected_groups:
         raise HTTPException(status_code=422, detail="ไม่พบกลุ่มภาพที่ใช้ซ้ำตาม BBID และช่วงวันที่ที่เลือก")
     report_dates = sorted(
@@ -110,7 +141,7 @@ async def create_export_pdf(request: CreateExportRequest, session: AsyncSession 
         for image in group
         if (source := resolve_image_source(image)).customer_id
     }
-    settings = get_settings()
+    technician_customers = technician_customer_counts([group for _, group in selected_groups], all_groups) if request.include_technician_summary else {}
     export_dir = Path(settings.storage.root) / "exports"
     export_dir.mkdir(parents=True, exist_ok=True)
     report_id = str(uuid4())
@@ -122,6 +153,8 @@ async def create_export_pdf(request: CreateExportRequest, session: AsyncSession 
     pdfmetrics.registerFont(TTFont(thai_bold_font, str(font_dir / "Sarabun-Bold.ttf")))
     width, height = A4
     green, orange, soft_green, muted = HexColor("#12372A"), HexColor("#F59E0B"), HexColor("#F3F8F5"), HexColor("#60756C")
+    summary_header_bg = HexColor("#458050")
+    summary_text = HexColor("#000000")
     storage = LocalImageStorage(settings.storage.root)
     logo = Path(__file__).parents[4] / "frontend" / "public" / "AIS-3BB-Fibre3-FullColor-DarkBG.png"
     margin, gap, columns = 36, 8, 4
@@ -139,7 +172,7 @@ async def create_export_pdf(request: CreateExportRequest, session: AsyncSession 
         compact = value.replace("-", "")
         return f"{compact[6:8]}/{compact[4:6]}/{compact[0:4]}" if len(compact) == 8 else value
 
-    def draw_thai_text(text: str, x: float, y: float, size: int, color: str) -> None:
+    def draw_thai_text(text: str, x: float, y: float, size: int, color: str, align_right: bool = False) -> None:
         """Render Thai with Pillow's shaping engine, then place it in the PDF."""
         scale = 3
         try:
@@ -155,7 +188,30 @@ async def create_export_pdf(request: CreateExportRequest, session: AsyncSession 
         content = io.BytesIO()
         image.save(content, format="PNG")
         rendered_width, rendered_height = image.width / scale, image.height / scale
-        canvas.drawImage(ImageReader(content), x, y - rendered_height + 2, width=rendered_width, height=rendered_height, mask="auto")
+        draw_x = x - rendered_width if align_right else x
+        canvas.drawImage(ImageReader(content), draw_x, y - rendered_height + 2, width=rendered_width, height=rendered_height, mask="auto")
+
+    def wrap_thai_text(text: str, max_width: float, size: int) -> list[str]:
+        scale = 3
+        try:
+            font = ImageFont.truetype(
+                str(font_dir / "Sarabun-Regular.ttf"), size * scale,
+                layout_engine=ImageFont.Layout.RAQM,
+            )
+        except (AttributeError, OSError, ValueError):
+            font = ImageFont.truetype(str(font_dir / "Sarabun-Regular.ttf"), size * scale)
+        lines: list[str] = []
+        line = ""
+        for word in text.split():
+            candidate = f"{line} {word}".strip()
+            if line and font.getlength(candidate) / scale > max_width:
+                lines.append(line)
+                line = word
+            else:
+                line = candidate
+        if line:
+            lines.append(line)
+        return lines or [""]
 
     def draw_header(page_number: int) -> float:
         canvas.setFillColor(green)
@@ -181,6 +237,29 @@ async def create_export_pdf(request: CreateExportRequest, session: AsyncSession 
         canvas.drawRightString(width - margin, 25, f"Page {page_number}")
         return height - 180
 
+    def group_note_for(group: list[ImageRecord]) -> str:
+        group_dates = sorted(
+            {
+                source.checkin_date
+                for image in group
+                if (source := resolve_image_source(image)).checkin_date
+            }
+        )
+        date_labels = ", ".join(format_card_date(value) for value in group_dates) or "ไม่ระบุวันที่"
+        return (
+            "กลุ่มนี้รวมภาพที่ใช้ซ้ำหรือคล้ายกัน ซึ่งถูกนำไปใช้กับ Customer ID อื่น "
+            f"ในวันที่ {date_labels}"
+        )
+
+    def group_note_x(number: int) -> float:
+        title = f"Group {number}"
+        return margin + 14 + pdfmetrics.stringWidth(title, thai_bold_font, 13) + 4
+
+    def group_heading_height(number: int, group: list[ImageRecord]) -> float:
+        note_x = group_note_x(number)
+        note_lines = wrap_thai_text(group_note_for(group), width - margin - note_x, 9)
+        return 42 + 12 * len(note_lines)
+
     def draw_group_heading(number: int, group: list[ImageRecord], y_position: float) -> float:
         customer_ids = ", ".join(
             sorted(
@@ -200,26 +279,30 @@ async def create_export_pdf(request: CreateExportRequest, session: AsyncSession 
                 }
             )
         )
+        group_note = group_note_for(group)
+        note_x = group_note_x(number)
+        note_lines = wrap_thai_text(group_note, width - margin - note_x, 9)
+        bar_bottom = y_position - 26 - (len(note_lines) - 1) * 11
+        bar_height = 42 + (len(note_lines) - 1) * 11
         canvas.setFillColor(orange)
-        canvas.roundRect(margin, y_position - 4, 5, 30, 2, fill=1, stroke=0)
+        canvas.roundRect(margin, bar_bottom, 5, bar_height, 2, fill=1, stroke=0)
         canvas.setFillColor(green)
         canvas.setFont(thai_bold_font, 13)
         canvas.drawString(margin + 14, y_position + 10, f"Group {number}")
+        for line_index, line in enumerate(note_lines):
+            # draw_thai_text positions a raster image from its top edge, so
+            # raise it to align visually with the PDF text baseline above.
+            draw_thai_text(line, note_x, y_position + 18 - line_index * 11, 9, "#3F5146")
+        # Keep the metadata rows clear of the wrapped note on the line above.
+        info_y = y_position - 10 - (len(note_lines) - 1) * 11
         canvas.setFillColor(muted)
         canvas.setFont(thai_bold_font, 9)
-        canvas.drawString(margin + 14, y_position - 3, "Technician ID:")
-        canvas.drawString(margin + 14, y_position - 14, "Customer ID:")
+        canvas.drawString(margin + 14, info_y, "Technician ID:")
+        canvas.drawString(margin + 14, info_y - 11, "Customer ID:")
         canvas.setFont(thai_font, 9)
-        canvas.drawString(margin + 76, y_position - 3, technician_ids[:88] or "-")
-        canvas.drawString(margin + 76, y_position - 14, customer_ids[:90])
-        draw_thai_text(
-            "กลุ่มนี้รวมภาพที่ใช้ซ้ำหรือคล้ายกัน ซึ่งถูกนำไปใช้กับ Customer ID อื่น",
-            margin + 14,
-            y_position - 21,
-            9,
-            "#60756C",
-        )
-        return y_position - 43
+        canvas.drawString(margin + 76, info_y, technician_ids[:88] or "-")
+        canvas.drawString(margin + 76, info_y - 11, customer_ids[:90])
+        return y_position - (42 + len(note_lines) * 12)
 
     def draw_card(image: ImageRecord, x: float, y_position: float) -> None:
         canvas.setFillColor(soft_green)
@@ -245,9 +328,78 @@ async def create_export_pdf(request: CreateExportRequest, session: AsyncSession 
 
     page_number = 1
     y = draw_header(page_number)
+    # A compact, paginated five-column summary. Each entry represents the
+    # technician's distinct customers on qualifying images across all dates.
+    entries = sorted(technician_customers.items(), key=lambda item: (-len(item[1]), item[0]))
+    def summary_heading(y_position: float) -> float:
+        draw_thai_text("รายการช่างที่ตรวจพบการใช้ภาพซ้ำในระบบ", margin, y_position, 11, "#315C46")
+        cursor = y_position - 15
+        first_description_lines = wrap_thai_text(
+            "จำนวน Customer ID ที่เกี่ยวข้องกับภาพที่ระบบตรวจพบว่ามีการใช้งานซ้ำหรือมีความคล้ายคลึงกันสูง",
+            width - margin * 2,
+            8,
+        )
+        for line in first_description_lines:
+            draw_thai_text(line, margin, cursor, 8, "#60756C")
+            cursor -= 10
+        cursor -= 3
+        second_description_lines = wrap_thai_text(
+            "ข้อมูลนี้เป็นผลการตรวจจับเบื้องต้นจากระบบ AI เพื่อใช้ในการคัดกรองและตรวจสอบเพิ่มเติม",
+            width - margin * 2,
+            8,
+        )
+        for line in second_description_lines:
+            draw_thai_text(line, margin, cursor, 8, "#60756C")
+            cursor -= 10
+        return cursor - 24
+
+    def summary_columns_heading(y_position: float) -> float:
+        column_width = (width - 2 * margin) / 5
+        for column in range(5):
+            x = margin + column * column_width
+            canvas.setFillColor(summary_header_bg)
+            canvas.roundRect(x, y_position - 8, column_width - 6, 18, 3, fill=1, stroke=0)
+            draw_thai_text("Technician ID", x + 4, y_position + 1, 8, "#FFFFFF")
+            draw_thai_text("Related ID", x + column_width - 10, y_position + 1, 8, "#FFFFFF", align_right=True)
+        return y_position - 22
+
+    if request.include_technician_summary:
+        # The header's content start leaves a large gap below Export Date;
+        # reclaim some of it before the first summary section.
+        y += 18
+        y = summary_heading(y)
+        y = summary_columns_heading(y)
+    column_width = (width - 2 * margin) / 5
+    for start in range(0, len(entries), 5):
+        row = entries[start:start + 5]
+        row_height = 19
+        if y - row_height < margin:
+            canvas.showPage(); page_number += 1
+            next_page_y = draw_header(page_number)
+            y = summary_columns_heading(summary_heading(next_page_y + 18))
+        for column, (technician, customers) in enumerate(row):
+            x = margin + column * column_width
+            canvas.setFillColor(soft_green)
+            canvas.rect(x, y + 14 - row_height, column_width - 6, row_height, fill=1, stroke=0)
+            canvas.setFillColor(summary_text)
+            count_label = str(len(customers))
+            canvas.setFont(thai_font, 9)
+            count_width = pdfmetrics.stringWidth(count_label, thai_font, 9)
+            available = max(1, column_width - 22 - count_width)
+            technician_width = pdfmetrics.stringWidth(technician, thai_font, 9)
+            canvas.saveState()
+            canvas.translate(x + 5, y)
+            if technician_width > available:
+                canvas.scale(available / technician_width, 1)
+            canvas.drawString(0, 0, technician)
+            canvas.restoreState()
+            canvas.drawRightString(x + column_width - 12, y, count_label)
+        y -= row_height + 3
+    if request.include_technician_summary:
+        y -= 20
     report_images: dict[str, tuple[ImageRecord, str]] = {}
     for group_number, (group_id, group) in enumerate(selected_groups, start=1):
-        if y < margin + card_height + 52:
+        if y - group_heading_height(group_number, group) < margin + card_height + 8:
             canvas.showPage(); page_number += 1; y = draw_header(page_number)
         y = draw_group_heading(group_number, group, y)
         for row_start in range(0, len(group), columns):

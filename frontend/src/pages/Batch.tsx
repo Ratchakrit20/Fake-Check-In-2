@@ -16,15 +16,16 @@ import {
   getActiveJob,
   getGroups,
   getJob,
+  getJobProgress,
   reanalyzeLibrary,
   resumeJob,
 } from "../api/client";
 
 const stageNames: Record<string, string> = {
   QUEUED: "กำลังวิเคราะห์รูปภาพ",
-  EMBEDDING: "กำลังวิเคราะห์รูปภาพ",
-  SEARCHING: "กำลังวิเคราะห์รูปภาพ",
-  VERIFYING: "กำลังวิเคราะห์รูปภาพ",
+  EMBEDDING: "กำลังเตรียมภาพสำหรับวิเคราะห์",
+  SEARCHING: "กำลังค้นหาภาพที่อาจเกี่ยวข้อง",
+  VERIFYING: "กำลังตรวจสอบคู่ภาพ",
   COMPLETED: "เสร็จสิ้น",
   CANCELLED: "หยุดการวิเคราะห์แล้ว",
   INTERRUPTED: "การวิเคราะห์ถูกขัดจังหวะ",
@@ -34,33 +35,85 @@ const stageNames: Record<string, string> = {
 export function Batch() {
   const [files, setFiles] = useState<File[]>([]),
     [job, setJob] = useState<BatchJob | null>(null);
+  const jobRef = useRef<BatchJob | null>(null);
+  const progressFloor = useRef<{ jobId: string; value: number } | null>(null);
   const [groups, setGroups] = useState<ImageGroup[]>([]);
   const [error, setError] = useState(""),
     [uploading, setUploading] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null),
     folderInput = useRef<HTMLInputElement>(null);
+
+  function replaceJob(next: BatchJob | null) {
+    if (!next) {
+      jobRef.current = null;
+      progressFloor.current = null;
+      setJob(null);
+      return;
+    }
+
+    const current = jobRef.current;
+    const merged = current?.id === next.id
+      ? { ...next, processed: Math.max(current.processed, next.processed) }
+      : next;
+    let previousFloor = progressFloor.current?.jobId === merged.id
+      ? progressFloor.current.value
+      : 0;
+    if (!previousFloor) {
+      try {
+        const saved = JSON.parse(sessionStorage.getItem("batch-progress-floor") ?? "null") as
+          | { jobId?: string; value?: number }
+          | null;
+        if (saved?.jobId === merged.id && Number.isFinite(saved.value)) {
+          previousFloor = Math.max(0, saved.value ?? 0);
+        }
+      } catch {
+        // Progress remains protected for this page session if storage is unavailable.
+      }
+    }
+    const value = Math.max(previousFloor, getJobProgress(merged));
+    progressFloor.current = { jobId: merged.id, value };
+    jobRef.current = merged;
+    try {
+      sessionStorage.setItem("batch-progress-floor", JSON.stringify({ jobId: merged.id, value }));
+    } catch {
+      // The in-memory floor still prevents polling responses from moving backward.
+    }
+    setJob(merged);
+  }
+
   useEffect(() => {
     getActiveJob()
       .then((active) => {
-        if (active) setJob(active);
+        if (active) replaceJob(active);
       })
-      .catch(() => undefined);
+      .catch((reason) => {
+        setError(reason instanceof Error ? `เชื่อมต่อ API ไม่ได้: ${reason.message}` : "เชื่อมต่อ API ไม่ได้");
+      });
   }, []);
   useEffect(() => {
     if (!job || ["COMPLETED", "CANCELLED", "INTERRUPTED", "FAILED"].includes(job.status)) return;
-    const timer = window.setInterval(async () => {
+    const jobId = job.id;
+    let cancelled = false;
+    let timer = 0;
+    const poll = async () => {
       try {
-        const next = await getJob(job.id);
-        setJob(next);
+        const next = await getJob(jobId);
+        if (cancelled) return;
+        replaceJob(next);
         if (next.status === "COMPLETED") setGroups((await getGroups()).groups);
       } catch (reason) {
-        setError(
-          reason instanceof Error ? reason.message : "โหลดสถานะไม่สำเร็จ",
-        );
+        if (!cancelled) {
+          setError(reason instanceof Error ? reason.message : "โหลดสถานะไม่สำเร็จ");
+        }
       }
-    }, 1200);
-    return () => window.clearInterval(timer);
-  }, [job]);
+      if (!cancelled) timer = window.setTimeout(poll, 2000);
+    };
+    timer = window.setTimeout(poll, 2000);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [job?.id, job?.status]);
   function choose(selected: FileList | null) {
     const chosen = selected ? Array.from(selected) : [];
     const allowed = new Set(["image/jpeg", "image/png", "image/webp", "image/tiff", "image/bmp"]);
@@ -68,7 +121,7 @@ export function Batch() {
     const totalSize = valid.reduce((sum, file) => sum + file.size, 0);
     const withinLimits = chosen.length <= 5000 && totalSize <= 1000 * 1024 * 1024;
     setFiles(withinLimits ? valid : []);
-    setJob(null);
+    replaceJob(null);
     setGroups([]);
     setError(
       chosen.length > 5000
@@ -86,7 +139,7 @@ export function Batch() {
     setError("");
     try {
       const created = await createBatch(files);
-      setJob({
+      replaceJob({
         id: created.job_id,
         status: created.status,
         total: created.file_count,
@@ -105,7 +158,7 @@ export function Batch() {
     setGroups([]);
     try {
       const created = await reanalyzeLibrary();
-      setJob({
+      replaceJob({
         id: created.job_id,
         status: created.status,
         total: created.file_count,
@@ -127,7 +180,7 @@ export function Batch() {
     setUploading(true);
     setError("");
     try {
-      setJob(await cancelJob(job.id));
+      replaceJob(await cancelJob(job.id));
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "หยุดการวิเคราะห์ไม่สำเร็จ");
     } finally {
@@ -139,7 +192,7 @@ export function Batch() {
     setUploading(true);
     setError("");
     try {
-      setJob(await resumeJob(job.id));
+      replaceJob(await resumeJob(job.id));
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "ทำต่อจากจุดเดิมไม่สำเร็จ");
     } finally {
@@ -147,7 +200,10 @@ export function Batch() {
     }
   }
   const progress = job
-    ? Math.round((job.processed / Math.max(1, job.total)) * 100)
+    ? Math.max(
+        getJobProgress(job),
+        progressFloor.current?.jobId === job.id ? progressFloor.current.value : 0,
+      )
     : 0;
   const isRunning = !!job && !["COMPLETED", "CANCELLED", "INTERRUPTED", "FAILED"].includes(job.status);
   return (
@@ -263,7 +319,7 @@ export function Batch() {
               >
                 <div>
                   <strong>{progress}%</strong>
-                  <span>ประมวลผลแล้ว</span>
+                  <span>ความคืบหน้าโดยรวม</span>
                 </div>
               </div>
               <div className="batch-progress-counts">

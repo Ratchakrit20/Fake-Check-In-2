@@ -15,6 +15,7 @@ frontend/dist/
 data/images/
 data/faiss/
 data/models/
+data/job-locks/
 *.db
 *.db-wal
 *.db-shm

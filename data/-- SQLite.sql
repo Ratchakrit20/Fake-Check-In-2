@@ -45,3 +45,16 @@ SELECT
 FROM images
 GROUP BY filename_prefix
 ORDER BY image_count DESC;
+
+SELECT
+    id,
+    status,
+    processed,
+    total,
+    error,
+    created_at,
+    started_at,
+    completed_at,
+    duration_seconds
+FROM analysis_jobs
+LIMIT 15;

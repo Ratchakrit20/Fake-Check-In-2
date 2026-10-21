@@ -163,6 +163,7 @@ class JobsConfig(BaseModel):
     broker_url: str
     result_backend: str
     worker_count: int = Field(gt=0)
+    worker_mode: Literal["inline", "process", "celery"] = "process"
 
 
 class PerformanceConfig(BaseModel):
