@@ -69,6 +69,18 @@ async def active_job(session: AsyncSession = Depends(get_session)) -> dict | Non
         .where(AnalysisJob.status.not_in(["COMPLETED", "CANCELLED", "INTERRUPTED", "FAILED"]))
         .order_by(AnalysisJob.created_at.desc())
     )
+    # After a browser reload there may be no active job even though the latest
+    # batch was cancelled or interrupted. Return that resumable job so the UI
+    # can offer Resume instead of making the user reselect all uploaded files.
+    if job is None:
+        job = await session.scalar(
+            select(AnalysisJob)
+            .where(
+                AnalysisJob.status.in_(["CANCELLED", "INTERRUPTED", "FAILED"]),
+                AnalysisJob.processed < AnalysisJob.total,
+            )
+            .order_by(AnalysisJob.created_at.desc())
+        )
     if job is None:
         return None
     completed = await _completed_item_count(session, job)

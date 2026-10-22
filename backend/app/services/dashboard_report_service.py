@@ -9,9 +9,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..core.config import get_settings
 from ..db.models import ImageRecord, PairwiseResult
+from .image_source_service import ResolvedImageSource, resolve_image_source
 from .relationship_group_service import build_reportable_groups_as_of, merge_report_groups_by_customer
 from .relationship_policy import REPORTABLE_CLASSIFICATIONS
-from .image_source_service import ResolvedImageSource, resolve_image_source
 
 
 def is_in_date_range(
@@ -79,7 +79,13 @@ def build_dashboard_insights(
     cross_date_images = [
         image for image_id, image in report_images.items() if image_id not in selected_ids
     ]
-    report_sources = [source_by_image[image.id] for image in report_images.values()]
+    selected_report_sources = [
+        source_by_image[image.id]
+        for image_id, image in report_images.items()
+        if image_id in selected_ids
+    ]
+    cross_date_sources = [source_by_image[image.id] for image in cross_date_images]
+    report_sources = [*selected_report_sources, *cross_date_sources]
 
     return {
         "daily": [
@@ -103,7 +109,12 @@ def build_dashboard_insights(
             "selected_images": len(selected_ids.intersection(reused_image_ids)),
             "report_images": len(report_images),
             "cross_date_images": len(cross_date_images),
-            "customer_ids": len({source.customer_id for source in report_sources if source.customer_id}),
+            "selected_date_customer_ids": len(
+                {source.customer_id for source in selected_report_sources if source.customer_id}
+            ),
+            "cross_date_customer_ids": len(
+                {source.customer_id for source in cross_date_sources if source.customer_id}
+            ),
             "technician_ids": len({source.technician_id for source in report_sources if source.technician_id}),
             "cross_dates": sorted(
                 {

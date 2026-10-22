@@ -172,7 +172,15 @@ async def create_export_pdf(request: CreateExportRequest, session: AsyncSession 
         compact = value.replace("-", "")
         return f"{compact[6:8]}/{compact[4:6]}/{compact[0:4]}" if len(compact) == 8 else value
 
-    def draw_thai_text(text: str, x: float, y: float, size: int, color: str, align_right: bool = False) -> None:
+    def draw_thai_text(
+        text: str,
+        x: float,
+        y: float,
+        size: int,
+        color: str,
+        align_right: bool = False,
+        baseline: bool = False,
+    ) -> None:
         """Render Thai with Pillow's shaping engine, then place it in the PDF."""
         scale = 3
         try:
@@ -184,12 +192,19 @@ async def create_export_pdf(request: CreateExportRequest, session: AsyncSession 
             font = ImageFont.truetype(str(font_dir / "Sarabun-Regular.ttf"), size * scale)
         box = font.getbbox(text)
         image = Image.new("RGBA", (box[2] - box[0] + 6 * scale, box[3] - box[1] + 6 * scale), (255, 255, 255, 0))
-        ImageDraw.Draw(image).text((3 * scale - box[0], 3 * scale - box[1]), text, font=font, fill=color)
+        text_origin_y = 3 * scale - box[1]
+        ImageDraw.Draw(image).text((3 * scale - box[0], text_origin_y), text, font=font, fill=color)
         content = io.BytesIO()
         image.save(content, format="PNG")
         rendered_width, rendered_height = image.width / scale, image.height / scale
         draw_x = x - rendered_width if align_right else x
-        canvas.drawImage(ImageReader(content), draw_x, y - rendered_height + 2, width=rendered_width, height=rendered_height, mask="auto")
+        if baseline:
+            ascent, _ = font.getmetrics()
+            baseline_from_top = (text_origin_y + ascent) / scale
+            draw_y = y - (rendered_height - baseline_from_top)
+        else:
+            draw_y = y - rendered_height + 2
+        canvas.drawImage(ImageReader(content), draw_x, draw_y, width=rendered_width, height=rendered_height, mask="auto")
 
     def wrap_thai_text(text: str, max_width: float, size: int) -> list[str]:
         scale = 3
@@ -290,9 +305,14 @@ async def create_export_pdf(request: CreateExportRequest, session: AsyncSession 
         canvas.setFont(thai_bold_font, 13)
         canvas.drawString(margin + 14, y_position + 10, f"Group {number}")
         for line_index, line in enumerate(note_lines):
-            # draw_thai_text positions a raster image from its top edge, so
-            # raise it to align visually with the PDF text baseline above.
-            draw_thai_text(line, note_x, y_position + 18 - line_index * 11, 9, "#3F5146")
+            draw_thai_text(
+                line,
+                note_x,
+                y_position + 10 - line_index * 11,
+                9,
+                "#3F5146",
+                baseline=True,
+            )
         # Keep the metadata rows clear of the wrapped note on the line above.
         info_y = y_position - 10 - (len(note_lines) - 1) * 11
         canvas.setFillColor(muted)
@@ -357,10 +377,17 @@ async def create_export_pdf(request: CreateExportRequest, session: AsyncSession 
         column_width = (width - 2 * margin) / 5
         for column in range(5):
             x = margin + column * column_width
+            cell_width = column_width - 6
+            split_x = x + cell_width * 0.68
             canvas.setFillColor(summary_header_bg)
-            canvas.roundRect(x, y_position - 8, column_width - 6, 18, 3, fill=1, stroke=0)
-            draw_thai_text("Technician ID", x + 4, y_position + 1, 8, "#FFFFFF")
-            draw_thai_text("Related ID", x + column_width - 10, y_position + 1, 8, "#FFFFFF", align_right=True)
+            canvas.roundRect(x, y_position - 8, cell_width, 18, 3, fill=1, stroke=0)
+            canvas.setStrokeColor(HexColor("#D7E4DB"))
+            canvas.setLineWidth(0.6)
+            canvas.line(split_x, y_position - 8, split_x, y_position + 10)
+            canvas.setFillColor(HexColor("#FFFFFF"))
+            canvas.setFont(thai_bold_font, 6.5)
+            canvas.drawString(x + 4, y_position - 1, "Technician ID")
+            canvas.drawRightString(x + cell_width - 4, y_position - 1, "Count ID")
         return y_position - 22
 
     if request.include_technician_summary:
@@ -379,21 +406,27 @@ async def create_export_pdf(request: CreateExportRequest, session: AsyncSession 
             y = summary_columns_heading(summary_heading(next_page_y + 18))
         for column, (technician, customers) in enumerate(row):
             x = margin + column * column_width
+            cell_width = column_width - 6
+            split_x = x + cell_width * 0.68
             canvas.setFillColor(soft_green)
-            canvas.rect(x, y + 14 - row_height, column_width - 6, row_height, fill=1, stroke=0)
+            canvas.rect(x, y + 14 - row_height, cell_width, row_height, fill=1, stroke=0)
+            canvas.setStrokeColor(HexColor("#AFC5B7"))
+            canvas.setLineWidth(0.6)
+            canvas.rect(x, y + 14 - row_height, cell_width, row_height, fill=0, stroke=1)
+            canvas.line(split_x, y + 14 - row_height, split_x, y + 14)
             canvas.setFillColor(summary_text)
             count_label = str(len(customers))
-            canvas.setFont(thai_font, 9)
-            count_width = pdfmetrics.stringWidth(count_label, thai_font, 9)
-            available = max(1, column_width - 22 - count_width)
-            technician_width = pdfmetrics.stringWidth(technician, thai_font, 9)
+            canvas.setFont(thai_font, 8)
+            available = max(1, split_x - (x + 8))
+            technician_width = pdfmetrics.stringWidth(technician, thai_font, 8)
             canvas.saveState()
-            canvas.translate(x + 5, y)
+            canvas.translate(x + 4, y + 1)
             if technician_width > available:
                 canvas.scale(available / technician_width, 1)
             canvas.drawString(0, 0, technician)
             canvas.restoreState()
-            canvas.drawRightString(x + column_width - 12, y, count_label)
+            canvas.setFont(thai_font, 8)
+            canvas.drawRightString(x + cell_width - 4, y + 1, count_label)
         y -= row_height + 3
     if request.include_technician_summary:
         y -= 20
@@ -435,5 +468,6 @@ async def download_export_pdf(report_id: str, session: AsyncSession = Depends(ge
     return FileResponse(
         report.pdf_path,
         media_type="application/pdf",
-        filename=f"relationship-report-{report.date_from}-{report.date_to}.pdf",
+        # filename=f"AI-Inspector-Report-{report.date_from}-{report.date_to}.pdf",
+        filename=f"AI-Inspector-Report-{report.date_to}.pdf",
     )

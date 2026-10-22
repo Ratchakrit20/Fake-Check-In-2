@@ -117,7 +117,8 @@ export type DashboardInsights = {
     selected_images: number;
     report_images: number;
     cross_date_images: number;
-    customer_ids: number;
+    selected_date_customer_ids: number;
+    cross_date_customer_ids: number;
     technician_ids: number;
     cross_dates: string[];
   };

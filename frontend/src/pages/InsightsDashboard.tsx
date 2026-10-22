@@ -38,7 +38,8 @@ const emptyData: DashboardData = {
       selected_images: 0,
       report_images: 0,
       cross_date_images: 0,
-      customer_ids: 0,
+      selected_date_customer_ids: 0,
+      cross_date_customer_ids: 0,
       technician_ids: 0,
       cross_dates: [],
     },
@@ -363,8 +364,12 @@ export function InsightsDashboard() {
               <strong>{preview.cross_date_images.toLocaleString()}</strong>
             </div>
             <div>
-              <span>Customer ID ในรายงาน</span>
-              <strong>{preview.customer_ids.toLocaleString()}</strong>
+              <span>Customer ID วันที่เลือก</span>
+              <strong>{preview.selected_date_customer_ids.toLocaleString()}</strong>
+            </div>
+            <div>
+              <span>Customer ID วันอื่นในกลุ่ม</span>
+              <strong>{preview.cross_date_customer_ids.toLocaleString()}</strong>
             </div>
             <div>
               <span>Technician ID ในรายงาน</span>

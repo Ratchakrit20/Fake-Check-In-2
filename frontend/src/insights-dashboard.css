@@ -46,7 +46,7 @@
 .technician-bars strong { color: #12372a; font-size: 13px; text-align: right; }
 .export-preview-panel .panel-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; }
 .export-preview-panel .primary { margin: 0; white-space: nowrap; }
-.export-preview-stats { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); border-top: 1px solid #e0ebe3; border-bottom: 1px solid #e0ebe3; margin-top: 20px; }
+.export-preview-stats { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); border-top: 1px solid #e0ebe3; border-bottom: 1px solid #e0ebe3; margin-top: 20px; }
 .export-preview-stats div { padding: 16px; border-right: 1px solid #e0ebe3; }
 .export-preview-stats div:last-child { border-right: 0; }
 .export-preview-stats span, .export-preview-stats strong { display: block; }
@@ -54,5 +54,5 @@
 .export-preview-stats strong { color: #126b4d; font-size: 23px; margin-top: 4px; }
 .cross-date-note { margin: 15px 0 0 !important; padding: 10px 12px; border-left: 3px solid #f59e0b; background: #fff8e9; color: #86602b !important; font-size: 12px; }
 .insight-empty { margin-top: 18px; padding: 32px; text-align: center; border-radius: 9px; background: #f7faf8; color: #7a8981; font-size: 13px; }
-@media (max-width: 900px) { .insight-filter-panel, .export-date-filter { align-items: stretch; flex-wrap: wrap; } .insight-filter-title { width: 100%; } .export-preview-stats { grid-template-columns: repeat(3, 1fr); } .export-preview-stats div:nth-child(3) { border-right: 0; } }
-@media (max-width: 720px) { .insight-donut-grid, .insight-chart-grid { grid-template-columns: 1fr; } .active-job-panel, .export-preview-panel .panel-head { align-items: flex-start; flex-direction: column; } .active-job-panel .dashboard-donut-wrap { margin: 0 auto; } .export-preview-stats { grid-template-columns: repeat(2, 1fr); } .export-preview-stats div:nth-child(odd) { border-right: 1px solid #e0ebe3; } .technician-bars li { grid-template-columns: 95px 1fr 36px; gap: 8px; } }
+@media (max-width: 900px) { .insight-filter-panel, .export-date-filter { align-items: stretch; flex-wrap: wrap; } .insight-filter-title { width: 100%; } .export-preview-stats { grid-template-columns: repeat(3, 1fr); } .export-preview-stats div:nth-child(3n) { border-right: 0; } }
+@media (max-width: 720px) { .insight-donut-grid, .insight-chart-grid { grid-template-columns: 1fr; } .active-job-panel, .export-preview-panel .panel-head { align-items: flex-start; flex-direction: column; } .active-job-panel .dashboard-donut-wrap { margin: 0 auto; } .export-preview-stats { grid-template-columns: repeat(2, 1fr); } .export-preview-stats div:nth-child(odd) { border-right: 1px solid #e0ebe3; } .export-preview-stats div:nth-child(even) { border-right: 0; } .technician-bars li { grid-template-columns: 95px 1fr 36px; gap: 8px; } }

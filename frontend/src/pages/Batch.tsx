@@ -288,9 +288,9 @@ export function Batch() {
         )}
       </div>
       {error && <div className="error">{error}</div>}
-      {job && ["FAILED", "INTERRUPTED"].includes(job.status) && (
+      {job && ["FAILED", "INTERRUPTED", "CANCELLED"].includes(job.status) && job.processed < job.total && (
         <button className="reanalyze" disabled={uploading} onClick={resume}>
-          <RotateCcw size={18} /> ทำต่อจากจุดเดิม
+          <RotateCcw size={18} /> ทำต่อจากจุดเดิม ({job.processed.toLocaleString()}/{job.total.toLocaleString()})
         </button>
       )}
       {job && (
@@ -304,7 +304,7 @@ export function Batch() {
               ) : job.status === "FAILED" ? (
                 <p className="working-note">กรุณาตรวจสอบการเชื่อมต่อแล้วลองอีกครั้ง</p>
               ) : job.status === "CANCELLED" ? (
-                <p className="working-note">หยุดงานแล้ว สามารถเพิ่มรูปภาพและเริ่มวิเคราะห์รอบใหม่ได้</p>
+                <p className="working-note">หยุดงานแล้ว สามารถทำต่อจากจุดเดิมได้ โดยระบบจะข้ามภาพที่เสร็จแล้ว</p>
               ) : null}
             </div>
             <div className="batch-progress-summary">
