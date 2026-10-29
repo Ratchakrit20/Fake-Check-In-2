@@ -16,7 +16,7 @@
 .active-job-panel .dashboard-donut { width: 142px; height: 142px; }
 .active-job-panel .dashboard-donut::before { width: 102px; height: 102px; }
 .active-job-panel .dashboard-donut strong { font-size: 28px; }
-.insight-donut-grid, .insight-chart-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; }
+.insight-donut-grid, .insight-chart-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 18px; }
 .insight-donut-panel { min-height: 330px; }
 .insight-donut-panel h2, .technician-panel h2, .export-preview-panel h2 { font-size: 17px; margin: 0; }
 .insight-totals { display: flex; justify-content: center; gap: 26px; color: #708176; font-size: 12px; }
@@ -46,7 +46,7 @@
 .technician-bars strong { color: #12372a; font-size: 13px; text-align: right; }
 .export-preview-panel .panel-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; }
 .export-preview-panel .primary { margin: 0; white-space: nowrap; }
-.export-preview-stats { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); border-top: 1px solid #e0ebe3; border-bottom: 1px solid #e0ebe3; margin-top: 20px; }
+.export-preview-stats { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); border-top: 1px solid #e0ebe3; border-bottom: 1px solid #e0ebe3; margin-top: 20px; }
 .export-preview-stats div { padding: 16px; border-right: 1px solid #e0ebe3; }
 .export-preview-stats div:last-child { border-right: 0; }
 .export-preview-stats span, .export-preview-stats strong { display: block; }

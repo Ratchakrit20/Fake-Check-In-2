@@ -5,6 +5,7 @@ def test_explicit_runtime_limits_are_respected():
     profile = detect_hardware(cpu_workers=3, opencv_threads=2, embedding_batch_size=5)
     assert profile.pair_workers == 3
     assert profile.opencv_threads == 2
+    assert profile.torch_threads == max(1, min(profile.logical_cpus - 1 or 1, profile.logical_cpus // 3))
     assert profile.embedding_batch_size == 5
 
 
@@ -13,4 +14,5 @@ def test_auto_runtime_values_are_positive():
     assert profile.logical_cpus >= 1
     assert profile.pair_workers >= 1
     assert profile.opencv_threads >= 1
+    assert profile.torch_threads >= 1
     assert profile.embedding_batch_size >= 1

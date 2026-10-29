@@ -12,7 +12,7 @@ from pathlib import Path
 
 import numpy as np
 from PIL import Image, ImageOps
-from sqlalchemy import select
+from sqlalchemy import select, update
 
 from ..core.config import get_settings
 from ..core.runtime import detect_hardware
@@ -23,6 +23,8 @@ from ..embeddings.sscd import SSCDEmbeddingProvider
 from ..storage.local_storage import LocalImageStorage
 from ..vector_store.faiss_store import FaissVectorStore
 from ..vector_store.phash_index import PerceptualHashIndex
+from .ai_image_metadata import serialize_ai_metadata
+from .image_quality_service import UNVERIFIABLE, ImageQualityAssessment, ImageQualityService
 from .image_source_service import resolve_image_source
 from .job_process_lock import job_process_lock
 from .pair_analysis_service import PairAnalysisService
@@ -111,6 +113,73 @@ async def _cancel_requested(job_id: str) -> bool:
         return job is None or job.status == JobStatus.CANCELLED.value
 
 
+async def _preflight_image_quality(
+    job_id: str,
+    all_records: dict[str, ImageRecord],
+    record_paths: dict[str, Path],
+    settings,
+) -> set[str]:
+    """Classify legacy records once so unusable images never enter either index."""
+    service = ImageQualityService(settings.image_quality)
+    pending = [
+        record for record in all_records.values()
+        if record.image_quality_status is None and record.id in record_paths
+    ]
+    updates: list[tuple[ImageRecord, ImageQualityAssessment]] = []
+    for index, record in enumerate(pending, start=1):
+        if index % 250 == 0 and await _cancel_requested(job_id):
+            raise RuntimeError("analysis job cancelled during image-quality preflight")
+        try:
+            with Image.open(record_paths[record.id]) as opened:
+                assessment = service.assess(opened)
+        except (OSError, ValueError):
+            logger.exception("image quality preflight could not decode %s", record.id)
+            assessment = ImageQualityAssessment(UNVERIFIABLE, "image_decode_failed", 1.0)
+        record.image_quality_status = assessment.status
+        record.image_quality_reason = assessment.reason
+        record.near_black_ratio = assessment.near_black_ratio
+        if assessment.status == UNVERIFIABLE:
+            record.analysis_status = UNVERIFIABLE
+        updates.append((record, assessment))
+        if len(updates) >= 250:
+            async with SessionFactory() as session:
+                for updated_record, result in updates:
+                    await session.execute(
+                        update(ImageRecord)
+                        .where(ImageRecord.id == updated_record.id)
+                        .values(
+                            image_quality_status=result.status,
+                            image_quality_reason=result.reason,
+                            near_black_ratio=result.near_black_ratio,
+                            analysis_status=UNVERIFIABLE if result.status == UNVERIFIABLE else updated_record.analysis_status,
+                        )
+                    )
+                await session.commit()
+            logger.info("image quality preflight: checked %d/%d legacy images", index, len(pending))
+            updates.clear()
+    if updates:
+        async with SessionFactory() as session:
+            for updated_record, result in updates:
+                await session.execute(
+                    update(ImageRecord)
+                    .where(ImageRecord.id == updated_record.id)
+                    .values(
+                        image_quality_status=result.status,
+                        image_quality_reason=result.reason,
+                        near_black_ratio=result.near_black_ratio,
+                        analysis_status=UNVERIFIABLE if result.status == UNVERIFIABLE else updated_record.analysis_status,
+                    )
+                )
+            await session.commit()
+        logger.info("image quality preflight: checked %d/%d legacy images", len(pending), len(pending))
+    unverifiable_ids = {
+        image_id for image_id, record in all_records.items()
+        if record.image_quality_status == UNVERIFIABLE
+    }
+    logger.info("image quality preflight complete: %d images excluded from matching", len(unverifiable_ids))
+    return unverifiable_ids
+
+
 async def process_batch_job(job_id: str, force: bool = False) -> None:
     settings = get_settings()
     profile = detect_hardware(
@@ -128,31 +197,60 @@ async def process_batch_job(job_id: str, force: bool = False) -> None:
             return
         # Preserve the last persisted progress during recovery/resume. The
         # completed item rows below are the checkpoint used to reconcile it.
-        await _set_job(job_id, JobStatus.EMBEDDING)
+        await _set_job(job_id, JobStatus.VALIDATING)
         async with SessionFactory() as session:
             items = list(
                 await session.scalars(
                     select(AnalysisJobItem).where(AnalysisJobItem.job_id == job_id).order_by(AnalysisJobItem.position)
                 )
             )
-            completed_items = [item for item in items if item.status == JobStatus.COMPLETED.value]
-            pending_items = [item for item in items if item.status != JobStatus.COMPLETED.value]
             all_records = {record.id: record for record in await session.scalars(select(ImageRecord))}
-            records_by_sha: dict[str, list[str]] = {}
-            for record in all_records.values():
-                records_by_sha.setdefault(record.sha256, []).append(record.id)
-            phash_index = PerceptualHashIndex.from_items(
-                ((record.id, record.phash) for record in all_records.values() if record.phash),
-                pair_service.phash.distance,
-            )
             record_paths = {
                 image_id: resolved
                 for image_id, record in all_records.items()
                 if (resolved := storage.resolve(image_id, record.storage_path)) is not None
             }
+        # Older library images have no quality status yet. Check them once
+        # before building either candidate index; the result is persisted.
+        unverifiable_ids = await _preflight_image_quality(job_id, all_records, record_paths, settings)
+        skipped_items = [
+            item for item in items
+            if item.status != JobStatus.COMPLETED.value and item.image_id in unverifiable_ids
+        ]
+        if skipped_items:
+            async with SessionFactory() as session:
+                for item in skipped_items:
+                    item_row = await session.get(AnalysisJobItem, item.id)
+                    if item_row:
+                        item_row.status = JobStatus.COMPLETED.value
+                await session.commit()
+            for item in skipped_items:
+                item.status = JobStatus.COMPLETED.value
+        completed_items = [item for item in items if item.status == JobStatus.COMPLETED.value]
+        pending_items = [
+            item for item in items
+            if item.status != JobStatus.COMPLETED.value and item.image_id not in unverifiable_ids
+        ]
+        await _set_job(job_id, JobStatus.EMBEDDING, len(completed_items))
+        records_by_sha: dict[str, list[str]] = {}
+        for record in all_records.values():
+            if record.image_quality_status != UNVERIFIABLE:
+                records_by_sha.setdefault(record.sha256, []).append(record.id)
+        phash_index = PerceptualHashIndex.from_items(
+            (
+                (record.id, record.phash)
+                for record in all_records.values()
+                if record.phash and record.image_quality_status != UNVERIFIABLE
+            ),
+            pair_service.phash.distance,
+        )
+        item_image_ids = [
+            item.image_id for item in items
+            if item.image_id not in unverifiable_ids and item.image_id in record_paths
+        ]
+        async with SessionFactory() as session:
             vectors: dict[str, np.ndarray] = {}
             missing: list[ImageRecord] = []
-            item_image_ids = [item.image_id for item in items]
             embedding_rows: list[ImageEmbedding] = []
             # Keep each IN clause below SQLite's older parameter limit while
             # replacing one database round trip per image with chunked reads.
@@ -169,7 +267,7 @@ async def process_batch_job(job_id: str, force: bool = False) -> None:
             embeddings_by_image = {row.image_id: row for row in embedding_rows}
             for item in items:
                 record = all_records.get(item.image_id)
-                if record is None or record.id not in record_paths:
+                if record is None or record.id not in record_paths or record.id in unverifiable_ids:
                     continue
                 embedding_row = embeddings_by_image.get(record.id)
                 if embedding_row is None:
@@ -207,6 +305,7 @@ async def process_batch_job(job_id: str, force: bool = False) -> None:
             if embedding_rows_since_commit:
                 await session.commit()
 
+        vector_store.remove_many(unverifiable_ids)
         vector_store.add_many([(image_id, vector) for image_id, vector in vectors.items()])
         async with SessionFactory() as session:
             existing_rows = list(await session.scalars(select(PairwiseResult)))
@@ -250,6 +349,7 @@ async def process_batch_job(job_id: str, force: bool = False) -> None:
                 # before geometric verification.
                 with Image.open(io.BytesIO(current_bytes)) as opened:
                     current_image = ImageOps.exif_transpose(opened).convert("RGB")
+                ai_metadata_json = serialize_ai_metadata(pair_service.ai_models.report_metadata(current_image))
                 rotation_hashes = [
                     pair_service.phash.calculate_single(current_image),
                     pair_service.phash.calculate_single(current_image.transpose(Image.Transpose.ROTATE_270)),
@@ -352,6 +452,7 @@ async def process_batch_job(job_id: str, force: bool = False) -> None:
                     if current_row:
                         current_row.analysis_status = "COMPLETED"
                         current_row.analyzed_at = datetime.now(UTC)
+                        current_row.ai_metadata_json = ai_metadata_json
                     item_row = await session.get(AnalysisJobItem, item.id)
                     if item_row:
                         item_row.status = JobStatus.COMPLETED.value

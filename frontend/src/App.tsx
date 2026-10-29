@@ -1,5 +1,6 @@
 import { Route, Routes } from "react-router-dom";
 import { Layout } from "./components/Layout";
+import { PageErrorBoundary } from "./components/PageErrorBoundary";
 import { Batch } from "./pages/Batch";
 import { Compare } from "./pages/Compare";
 import { Dashboard } from "./pages/Dashboard";
@@ -13,7 +14,7 @@ export function App() {
       <Route element={<Layout />}>
         {/* <Route index element={<Dashboard />} /> */}
         <Route index element={<InsightsDashboard />} />
-        <Route path="compare" element={<Compare />} />
+        <Route path="compare" element={<PageErrorBoundary><Compare /></PageErrorBoundary>} />
         <Route path="batch" element={<Batch />} />
         <Route path="groups" element={<Groups />} />
         <Route

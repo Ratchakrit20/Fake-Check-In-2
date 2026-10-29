@@ -47,6 +47,12 @@ const evidenceLabels: Record<string, string> = {
   heatmap_foreground_change: "พื้นที่เปลี่ยนบนตัวบุคคลหลังจัดแนว",
   heatmap_background_change: "พื้นที่เปลี่ยนบนฉากหลังหลังจัดแนว",
   heatmap_used_for_decision: "นำ heatmap ไปตัดสินอัตโนมัติ",
+  image_a_quality_status: "สถานะคุณภาพภาพ A",
+  image_a_quality_reason: "เหตุผลภาพ A",
+  image_a_near_black_ratio: "สัดส่วนพิกเซลใกล้ดำภาพ A",
+  image_b_quality_status: "สถานะคุณภาพภาพ B",
+  image_b_quality_reason: "เหตุผลภาพ B",
+  image_b_near_black_ratio: "สัดส่วนพิกเซลใกล้ดำภาพ B",
 };
 
 const classificationLabels: Record<string, string> = {
@@ -58,6 +64,7 @@ const classificationLabels: Record<string, string> = {
   repeated_checkin: "พบบุคคลและฉากหลังสอดคล้องกัน",
   similar_person: "พบบุคคลคล้ายกัน",
   unrelated: "ไม่พบความสัมพันธ์",
+  unverifiable: "ตรวจสอบองค์ประกอบไม่ได้",
 };
 
 function thaiConclusion(result: RelationshipResult): {
@@ -69,6 +76,12 @@ function thaiConclusion(result: RelationshipResult): {
     return {
       title: "เป็นไฟล์เดียวกัน",
       detail: "ข้อมูลของทั้งสองไฟล์ตรงกันทั้งหมด แม้ชื่อไฟล์อาจต่างกัน",
+    };
+  }
+  if (result.classification === "unverifiable") {
+    return {
+      title: "ไม่สามารถตรวจองค์ประกอบภาพได้",
+      detail: "ภาพมีพื้นที่ใกล้ดำมากเกินไป ระบบจึงงดเปรียบเทียบและไม่สรุปว่าเกี่ยวข้องหรือไม่",
     };
   }
   if (
@@ -173,6 +186,11 @@ const verdictText = {
     label: "ยังไม่เข้าข่ายใช้ภาพเดิม",
     hint: "หลักฐานไม่เพียงพอที่จะยืนยันว่ามีการนำภาพเดิมมาใช้",
     icon: "✓",
+  },
+  unverifiable: {
+    label: "ตรวจสอบไม่ได้",
+    hint: "ระบบงดเปรียบเทียบ เพราะภาพมีข้อมูลภาพที่ใช้ตรวจไม่เพียงพอ",
+    icon: "—",
   },
 } as const;
 
@@ -521,7 +539,7 @@ export function Compare() {
       {result &&
         (() => {
           const conclusion = thaiConclusion(result),
-            verdict = verdictText[result.reuse_verdict];
+            verdict = verdictText[result.reuse_verdict] ?? verdictText.not_reused;
           return (
             <div
               className={`result-card panel verdict-${result.reuse_verdict}`}
@@ -573,6 +591,11 @@ export function Compare() {
                   </div>
                 </div>
               </div>
+              {result.classification === "unverifiable" ? (
+                <p className="technology-hint">
+                  ระบบหยุดก่อนคำนวณ pHash, SSCD และ SIFT เพราะภาพมีพื้นที่ใกล้ดำมากเกินไป
+                </p>
+              ) : (
               <details className="technology" open>
                 <summary>หลักฐานจากแต่ละเทคโนโลยี</summary>
                 <p className="technology-hint">
@@ -635,6 +658,7 @@ export function Compare() {
                   })}
                 </div>
               </details>
+              )}
               <details className="technical">
                 <summary>ดูค่าตรวจสอบสำหรับผู้เชี่ยวชาญ</summary>
                 <div className="evidence">

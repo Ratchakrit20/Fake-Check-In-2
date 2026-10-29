@@ -44,6 +44,8 @@ class RansacResult:
 @dataclass(slots=True)
 class PairEvidence:
     exact_duplicate: bool = False
+    image_a_source_hint: str | None = None
+    image_b_source_hint: str | None = None
     phash_distance: int | None = None
     phash_normal_distance: int | None = None
     phash_flip_distance: int | None = None

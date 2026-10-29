@@ -1,12 +1,12 @@
 from fastapi import APIRouter, Depends, Query, Response
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ...db.models import AnalysisJob, PairwiseResult
+from ...core.config import get_settings
+from ...db.models import AnalysisJob, ImageRecord, PairwiseResult
 from ...db.session import get_session
 from ...services.dashboard_report_service import build_dashboard_summary, create_excel_report
 from ...services.relationship_policy import REPORTABLE_CLASSIFICATIONS
-from ...core.config import get_settings
 
 router = APIRouter(prefix="/dashboard", tags=["dashboard"])
 
@@ -20,10 +20,15 @@ async def dashboard(
     summary = await build_dashboard_summary(session, date_from, date_to)
     total = summary["images_in_system"]
     minimum_score = get_settings().relationship.report_min_relationship_score
+    verifiable_image_ids = select(ImageRecord.id).where(
+        or_(ImageRecord.image_quality_status.is_(None), ImageRecord.image_quality_status != "UNVERIFIABLE")
+    )
     related = await session.scalar(
         select(func.count()).select_from(PairwiseResult).where(
             PairwiseResult.relationship_level.in_(REPORTABLE_CLASSIFICATIONS),
             PairwiseResult.relationship_score >= minimum_score,
+            PairwiseResult.image_a_id.in_(verifiable_image_ids),
+            PairwiseResult.image_b_id.in_(verifiable_image_ids),
         )
     ) or 0
     pending = await session.scalar(select(func.count()).select_from(AnalysisJob).where(AnalysisJob.status.not_in(["COMPLETED", "CANCELLED", "FAILED"]))) or 0

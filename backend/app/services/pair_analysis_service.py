@@ -15,9 +15,12 @@ from ..detectors.perceptual_hash_detector import PerceptualHashDetector
 from ..detectors.ransac_verifier import RANSACVerifier
 from ..detectors.sha256_detector import SHA256Detector
 from ..detectors.sift_matcher import SIFTMatcher
+from ..domain.enums import RelationClassification, RelationshipLevel, ReuseVerdict
 from ..domain.interfaces import EmbeddingProvider
 from ..domain.schemas import PairEvidence, RansacResult, RelationshipResult
+from .ai_model_service import AIModelService
 from .evidence_visualizer import render_aligned_pair, render_body_masks, render_change_heatmap, render_verified_matches
+from .image_quality_service import ImageQualityService
 from .relationship_scorer import RelationshipScorer
 
 logger = logging.getLogger(__name__)
@@ -37,8 +40,15 @@ class PairAnalysisService:
         )
         self.ransac = RANSACVerifier(settings.ransac.reprojection_threshold)
         self.flip = FlipDetector(self.sift, self.ransac)
+        self.ai_models = AIModelService(settings.ai_models_lat_long)
         self.body_parts = BodyPartDetector(settings.body_parts, settings.sift.max_dimension, settings.ransac.reprojection_threshold) if settings.body_parts.enabled else None
         self.scorer = RelationshipScorer(settings.relationship)
+
+    @staticmethod
+    def _transform_mask(mask: np.ndarray | None, transpose: Image.Transpose) -> np.ndarray | None:
+        if mask is None:
+            return None
+        return np.asarray(Image.fromarray(mask).transpose(transpose))
 
     def analyze_bytes(
         self,
@@ -49,14 +59,40 @@ class PairAnalysisService:
     ) -> RelationshipResult:
         started = perf_counter()
         logger.info("pair analysis: started (A=%d bytes, B=%d bytes)", len(first_content), len(second_content))
+        decode_started = perf_counter()
+        with Image.open(io.BytesIO(first_content)) as opened_a, Image.open(io.BytesIO(second_content)) as opened_b:
+            first = ImageOps.exif_transpose(opened_a).convert("RGB")
+            second = ImageOps.exif_transpose(opened_b).convert("RGB")
+        logger.info("pair analysis: stage=decode seconds=%.3f sizes=%sx%s,%sx%s", perf_counter() - decode_started, first.width, first.height, second.width, second.height)
+        quality_service = ImageQualityService(self.settings.image_quality)
+        quality_a, quality_b = quality_service.assess(first), quality_service.assess(second)
+        if not quality_a.can_compare or not quality_b.can_compare:
+            reasons = [
+                f"ภาพ {label} ตรวจองค์ประกอบไม่ได้: พื้นที่ใกล้ดำ {assessment.near_black_ratio:.1%}"
+                for label, assessment in (("A", quality_a), ("B", quality_b))
+                if not assessment.can_compare
+            ]
+            logger.info("pair analysis: skipped quality gate reasons=%s total=%.3fs", reasons, perf_counter() - started)
+            return RelationshipResult(
+                score=0.0,
+                decision=RelationshipLevel.UNVERIFIABLE,
+                classification=RelationClassification.UNVERIFIABLE,
+                reuse_verdict=ReuseVerdict.UNVERIFIABLE,
+                reasons=reasons,
+                evidence={
+                    "image_a_quality_status": quality_a.status,
+                    "image_a_quality_reason": quality_a.reason,
+                    "image_a_near_black_ratio": round(quality_a.near_black_ratio, 5),
+                    "image_b_quality_status": quality_b.status,
+                    "image_b_quality_reason": quality_b.reason,
+                    "image_b_near_black_ratio": round(quality_b.near_black_ratio, 5),
+                },
+            )
         exact = SHA256Detector.from_bytes(first_content) == SHA256Detector.from_bytes(second_content)
         if exact:
             logger.info("pair analysis: exact duplicate (%.2fs)", perf_counter() - started)
             return self.scorer.score(PairEvidence(exact_duplicate=True))
-        with Image.open(io.BytesIO(first_content)) as opened_a, Image.open(io.BytesIO(second_content)) as opened_b:
-            first = ImageOps.exif_transpose(opened_a).convert("RGB")
-            second = ImageOps.exif_transpose(opened_b).convert("RGB")
-        logger.info("pair analysis: decoded images %sx%s and %sx%s (%.2fs)", first.width, first.height, second.width, second.height, perf_counter() - started)
+        phash_started = perf_counter()
         hash_a, hash_b = self.phash.calculate(first), self.phash.calculate(second)
         blur_variance_a = ImageQualityDetector.blur_variance(first)
         blur_variance_b = ImageQualityDetector.blur_variance(second)
@@ -73,10 +109,37 @@ class PairAnalysisService:
             name: self.phash.distance(hash_a.original, self.phash.calculate_single(image))
             for name, image in transformed_images.items()
         }
+        logger.info("pair analysis: stage=phash seconds=%.3f", perf_counter() - phash_started)
         flip_hash_distance = transform_distances.get("horizontal_flip")
-        normal_sift = self.sift.match(first, second)
+        latlong_started = perf_counter()
+        exclusion_mask_a, datetime_detected_a = self.ai_models.analyze_image(first)
+        exclusion_mask_b, datetime_detected_b = self.ai_models.analyze_image(second)
+        logger.info(
+            "pair analysis: stage=latlong_mask seconds=%.3f excluded_a=%d excluded_b=%d",
+            perf_counter() - latlong_started,
+            int(np.count_nonzero(exclusion_mask_a == 0)) if exclusion_mask_a is not None else 0,
+            int(np.count_nonzero(exclusion_mask_b == 0)) if exclusion_mask_b is not None else 0,
+        )
+        transformed_masks = {
+            "original": exclusion_mask_b,
+            "rotate_90": self._transform_mask(exclusion_mask_b, Image.Transpose.ROTATE_270),
+            "rotate_180": self._transform_mask(exclusion_mask_b, Image.Transpose.ROTATE_180),
+            "rotate_270": self._transform_mask(exclusion_mask_b, Image.Transpose.ROTATE_90),
+        }
+        if self.settings.flip_detection.horizontal:
+            transformed_masks["horizontal_flip"] = self._transform_mask(exclusion_mask_b, Image.Transpose.FLIP_LEFT_RIGHT)
+        sift_started = perf_counter()
+        normal_sift = self.sift.match(first, second, exclusion_mask_a, exclusion_mask_b)
+        sift_seconds = perf_counter() - sift_started
+        ransac_started = perf_counter()
         normal_ransac = self.ransac.verify(normal_sift)
-        logger.info("pair analysis: pHash + SIFT completed (%d good matches, %d inliers, %.2fs)", normal_sift.good_match_count, normal_ransac.inlier_count, perf_counter() - started)
+        logger.info(
+            "pair analysis: stage=sift seconds=%.3f stage=ransac seconds=%.3f good_matches=%d inliers=%d",
+            sift_seconds,
+            perf_counter() - ransac_started,
+            normal_sift.good_match_count,
+            normal_ransac.inlier_count,
+        )
         best_sift, best_ransac, transform = normal_sift, normal_ransac, "original"
         normal_geometry_passes = (
             normal_ransac.inlier_count >= self.settings.ransac.min_inliers
@@ -93,8 +156,21 @@ class PairAnalysisService:
                 and candidate_distance + 3 <= normal_hash_distance
             )
             if hash_suggests_transform or not normal_geometry_passes:
-                candidate_sift = self.sift.match(first, transformed_images[candidate_transform])
+                transform_started = perf_counter()
+                candidate_sift = self.sift.match(
+                    first,
+                    transformed_images[candidate_transform],
+                    exclusion_mask_a,
+                    transformed_masks[candidate_transform],
+                )
                 candidate_ransac = self.ransac.verify(candidate_sift)
+                logger.info(
+                    "pair analysis: stage=alternate_transform seconds=%.3f transform=%s matches=%d inliers=%d",
+                    perf_counter() - transform_started,
+                    candidate_transform,
+                    candidate_sift.good_match_count,
+                    candidate_ransac.inlier_count,
+                )
                 absolute_geometry = (
                     candidate_ransac.inlier_count >= self.settings.ransac.min_inliers
                     and candidate_ransac.inlier_ratio >= self.settings.ransac.min_inlier_ratio
@@ -111,6 +187,7 @@ class PairAnalysisService:
         embedding_similarity = embedding_similarity_override
         if (embedding_similarity is None or rotation_degrees) and self.embedding_provider is not None:
             logger.info("pair analysis: running embedding model")
+            embedding_started = perf_counter()
             embed_many = getattr(self.embedding_provider, "embed_many", None)
             if embed_many is not None:
                 vector_a, vector_b = embed_many([first, verification_second])
@@ -118,7 +195,7 @@ class PairAnalysisService:
                 vector_a = self.embedding_provider.embed(first)
                 vector_b = self.embedding_provider.embed(verification_second)
             embedding_similarity = float(np.dot(vector_a, vector_b) / max(np.linalg.norm(vector_a) * np.linalg.norm(vector_b), 1e-12))
-            logger.info("pair analysis: embedding completed (%.2fs)", perf_counter() - started)
+            logger.info("pair analysis: stage=embedding seconds=%.3f", perf_counter() - embedding_started)
         body_gate, body_suspected, similar_person_only, body_part_inliers = False, False, False, {}
         foreground_ransac, background_ransac = RansacResult(), RansacResult()
         masks_a: dict[str, np.ndarray] = {}
@@ -133,6 +210,7 @@ class PairAnalysisService:
         )
         if self.body_parts is not None and geometry_is_credible:
             logger.info("pair analysis: running body-part segmentation")
+            body_parts_started = perf_counter()
             body_gate, body_suspected, similar_person_only, body_part_inliers, foreground_ransac, background_ransac = self.body_parts.verify_matches(
                 first, verification_second, best_sift, best_ransac
             )
@@ -181,7 +259,7 @@ class PairAnalysisService:
                 and embedding_similarity >= self.settings.relationship.background_replaced_min_embedding_similarity
                 and (body_gate or body_suspected)
             )
-            logger.info("pair analysis: body-part segmentation completed (%.2fs)", perf_counter() - started)
+            logger.info("pair analysis: stage=body_parts_and_masks seconds=%.3f", perf_counter() - body_parts_started)
         foreground_verified = (
             body_gate
             and foreground_ransac.inlier_count >= self.settings.body_parts.min_reuse_inliers
@@ -259,6 +337,8 @@ class PairAnalysisService:
         )
         evidence = PairEvidence(
             exact_duplicate=exact,
+            image_a_source_hint="SOA" if datetime_detected_a else None,
+            image_b_source_hint="SOA" if datetime_detected_b else None,
             phash_distance=distance,
             phash_normal_distance=normal_hash_distance,
             phash_flip_distance=flip_hash_distance,

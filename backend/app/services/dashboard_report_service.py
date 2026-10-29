@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..core.config import get_settings
 from ..db.models import ImageRecord, PairwiseResult
+from .ai_image_metadata import is_soa_metadata_scanned, parse_datetime_boxes
 from .image_source_service import ResolvedImageSource, resolve_image_source
 from .relationship_group_service import build_reportable_groups_as_of, merge_report_groups_by_customer
 from .relationship_policy import REPORTABLE_CLASSIFICATIONS
@@ -52,9 +53,12 @@ def build_dashboard_insights(
                     "reused_images": 0,
                     "customer_ids": set(),
                     "reused_customer_ids": set(),
+                    "soa_images": 0,
                 },
             )
             row["total_images"] += 1
+            if parse_datetime_boxes(image.ai_metadata_json):
+                row["soa_images"] += 1
             if source.customer_id:
                 row["customer_ids"].add(source.customer_id)
             if image.id in reused_image_ids:
@@ -95,6 +99,7 @@ def build_dashboard_insights(
                 "reused_images": row["reused_images"],
                 "total_customer_ids": len(row["customer_ids"]),
                 "reused_customer_ids": len(row["reused_customer_ids"]),
+                "soa_images": row["soa_images"],
             }
             for date, row in sorted(daily.items())
         ],
@@ -123,6 +128,7 @@ def build_dashboard_insights(
                     if source_by_image[image.id].checkin_date
                 }
             ),
+            "soa_images": sum(bool(parse_datetime_boxes(image.ai_metadata_json)) for image in report_images.values()),
         },
     }
 
@@ -142,6 +148,13 @@ async def build_dashboard_summary(
             )
         )
     )
+    verifiable_image_ids = {
+        image.id for image in images if image.image_quality_status != "UNVERIFIABLE"
+    }
+    reused_pairs = [
+        pair for pair in reused_pairs
+        if pair.image_a_id in verifiable_image_ids and pair.image_b_id in verifiable_image_ids
+    ]
     reused_image_ids = {
         image_id
         for pair in reused_pairs
@@ -153,6 +166,8 @@ async def build_dashboard_summary(
         for image in images
         if is_in_date_range(source_by_image[image.id].checkin_date, date_from, date_to)
     ]
+    soa_scanned_images = sum(is_soa_metadata_scanned(image.ai_metadata_json) for image in selected_images)
+    soa_images = sum(bool(parse_datetime_boxes(image.ai_metadata_json)) for image in selected_images)
     selected_source_by_image = {
         image.id: source_by_image[image.id].customer_id
         for image in selected_images
@@ -190,6 +205,9 @@ async def build_dashboard_summary(
     return {
         "images_in_system": len(selected_images),
         "reused_images": sum(image.id in reused_image_ids for image in selected_images),
+        "soa_images": soa_images,
+        "soa_scanned_images": soa_scanned_images,
+        "soa_pending_images": len(selected_images) - soa_scanned_images,
         "total_jobs": len(all_jobs),
         "reused_jobs": len(reused_jobs),
         "duplicate_jobs": duplicate_jobs,

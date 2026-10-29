@@ -22,6 +22,12 @@ class ImageRecord(Base):
     source_technician_id: Mapped[str | None] = mapped_column(String(10), nullable=True, index=True)
     source_job_number: Mapped[str | None] = mapped_column(String(10), nullable=True, index=True)
     source_checkin_date: Mapped[str | None] = mapped_column(String(8), nullable=True, index=True)
+    source_job_type: Mapped[str | None] = mapped_column(String(20), nullable=True, index=True)
+    source_captured_at: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    ai_metadata_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    image_quality_status: Mapped[str | None] = mapped_column(String(30), nullable=True, index=True)
+    image_quality_reason: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    near_black_ratio: Mapped[float | None] = mapped_column(Float, nullable=True)
     storage_path: Mapped[str] = mapped_column(Text)
     file_size: Mapped[int] = mapped_column(Integer)
     width: Mapped[int] = mapped_column(Integer)
@@ -97,6 +103,7 @@ class ExportReport(Base):
     date_from: Mapped[str] = mapped_column(String(8))
     date_to: Mapped[str] = mapped_column(String(8))
     pdf_path: Mapped[str] = mapped_column(Text)
+    summary_xlsx_path: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
 

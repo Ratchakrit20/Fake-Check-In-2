@@ -34,7 +34,7 @@ def build_reportable_groups(
     merge_by_customer: bool = True,
 ) -> list[list[ImageRecord]]:
     """Build the shared groups used by the export flow and dashboard preview."""
-    image_list = list(images)
+    image_list = [image for image in images if image.image_quality_status != "UNVERIFIABLE"]
     image_by_id = {image.id: image for image in image_list}
     qualified_pairs = [pair for pair in pairs if pair.relationship_level in REPORTABLE_CLASSIFICATIONS and pair.relationship_score >= minimum_score and pair.image_a_id in image_by_id and pair.image_b_id in image_by_id]
     edges = RelationshipGraphService.qualified_edges(

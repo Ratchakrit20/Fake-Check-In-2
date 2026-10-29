@@ -13,9 +13,11 @@ from ...db.models import AnalysisJob, AnalysisJobItem, ImageRecord
 from ...db.session import get_session
 from ...detectors.perceptual_hash_detector import PerceptualHashDetector
 from ...detectors.sha256_detector import SHA256Detector
+from ...services.image_metadata_service import extract_capture_datetime
+from ...services.image_quality_service import ImageQualityService
 from ...services.image_validation_service import ImageValidationService
 from ...services.job_dispatch_service import JobDispatchError, dispatch_batch_job
-from ...services.source_filename import parse_source_reference
+from ...services.source_filename import parse_job_type, parse_source_reference
 from ...storage.local_storage import LocalImageStorage
 
 router = APIRouter(prefix="/batches", tags=["batches"])
@@ -53,6 +55,8 @@ async def create_batch(
     validator = ImageValidationService(settings.app)
     storage = LocalImageStorage(settings.storage.root)
     phash_detector = PerceptualHashDetector(settings.phash.hash_size, settings.flip_detection.horizontal)
+    quality_service = ImageQualityService(settings.image_quality)
+    unverifiable_count = 0
     job_items: list[AnalysisJobItem] = []
     for position, file in enumerate(files):
         content = await file.read()
@@ -63,10 +67,16 @@ async def create_batch(
         existing_exact = await session.scalar(select(ImageRecord).where(ImageRecord.sha256 == sha256).limit(1))
         image_id = str(uuid4())
         storage_path = storage.save(image_id, metadata.suffix, content)
-        if existing_exact is not None and existing_exact.phash:
-            phash = existing_exact.phash
-        else:
-            with Image.open(io.BytesIO(content)) as opened:
+        with Image.open(io.BytesIO(content)) as opened:
+            quality = quality_service.assess(opened)
+            if not quality.can_compare:
+                unverifiable_count += 1
+            captured_at = extract_capture_datetime(opened)
+            if not quality.can_compare:
+                phash = None
+            elif existing_exact is not None and existing_exact.phash:
+                phash = existing_exact.phash
+            else:
                 phash = phash_detector.calculate(opened).original
         original_filename = Path(file.filename or "image").name
         source_reference = parse_source_reference(original_filename)
@@ -76,6 +86,8 @@ async def create_batch(
             source_technician_id=source_reference.technician_id if source_reference else None,
             source_job_number=source_reference.job_number if source_reference else None,
             source_checkin_date=source_reference.checkin_date if source_reference else None,
+            source_job_type=parse_job_type(original_filename),
+            source_captured_at=captured_at,
             storage_path=str(storage_path),
             file_size=len(content),
             width=metadata.width,
@@ -83,7 +95,10 @@ async def create_batch(
             mime_type=metadata.mime_type,
             sha256=sha256,
             phash=phash,
-            analysis_status="QUEUED",
+            analysis_status="QUEUED" if quality.can_compare else "UNVERIFIABLE",
+            image_quality_status=quality.status,
+            image_quality_reason=quality.reason,
+            near_black_ratio=quality.near_black_ratio,
         )
         session.add(record)
         job_items.append(AnalysisJobItem(job_id=job.id, image_id=record.id, position=position, status="QUEUED"))
@@ -100,7 +115,12 @@ async def create_batch(
         job.error = str(exc)
         await session.commit()
         raise HTTPException(status_code=503, detail=str(exc)) from exc
-    return {"job_id": job.id, "status": job.status, "file_count": len(files)}
+    return {
+        "job_id": job.id,
+        "status": job.status,
+        "file_count": len(files),
+        "unverifiable_count": unverifiable_count,
+    }
 
 
 @router.post("/reanalyze", status_code=202)
@@ -118,6 +138,9 @@ async def reanalyze_library(background_tasks: BackgroundTasks, session: AsyncSes
             record.source_technician_id = reference.technician_id
             record.source_job_number = reference.job_number
             record.source_checkin_date = reference.checkin_date
+            record.source_job_type = reference.job_type
+        elif record.source_job_type is None:
+            record.source_job_type = parse_job_type(record.original_filename)
         record.analysis_status = "QUEUED"
         session.add(AnalysisJobItem(job_id=job.id, image_id=record.id, position=position, status="QUEUED"))
     await session.commit()

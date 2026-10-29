@@ -17,6 +17,11 @@ def test_default_config_is_valid():
     assert len(settings.embedding.model_sha256) == 64
     assert settings.vector_search.top_k == 30
     assert settings.jobs.worker_mode == "process"
+    assert settings.ai_models_lat_long.model_path.name == "v1.pt"
+    assert settings.ai_models_lat_long.lat_long_confidence == 0.90
+    assert settings.ai_models_lat_long.datetime_enabled is True
+    assert settings.ai_models_lat_long.datetime_confidence == 0.25
+    assert settings.ai_models_lat_long.datetime_report_confidence == 0.95
 
 
 def test_celery_worker_mode_is_configurable():

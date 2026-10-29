@@ -5,10 +5,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ...core.config import get_settings
 from ...db.models import ImageRecord, PairwiseResult
 from ...db.session import get_session
+from ...services.image_source_service import resolve_image_source
 from ...services.relationship_graph_service import RelationshipGraphService
 from ...services.relationship_group_service import merge_group_indexes_by_bbid
 from ...services.relationship_policy import GROUP_CLASSIFICATIONS
-from ...services.image_source_service import resolve_image_source
 
 router = APIRouter(prefix="/groups", tags=["groups"])
 
@@ -16,8 +16,12 @@ router = APIRouter(prefix="/groups", tags=["groups"])
 @router.get("")
 async def groups(session: AsyncSession = Depends(get_session)) -> dict:
     settings = get_settings()
-    image_records = list(await session.scalars(select(ImageRecord)))
+    image_records = [
+        record for record in await session.scalars(select(ImageRecord))
+        if record.image_quality_status != "UNVERIFIABLE"
+    ]
     node_rows = [record.id for record in image_records]
+    eligible_image_ids = set(node_rows)
     minimum_score = settings.relationship.report_min_relationship_score
     related_pairs = list(
         await session.scalars(
@@ -27,6 +31,10 @@ async def groups(session: AsyncSession = Depends(get_session)) -> dict:
             )
         )
     )
+    related_pairs = [
+        pair for pair in related_pairs
+        if pair.image_a_id in eligible_image_ids and pair.image_b_id in eligible_image_ids
+    ]
     scored_edges = [(pair.image_a_id, pair.image_b_id, pair.relationship_score) for pair in related_pairs]
     edges = RelationshipGraphService.qualified_edges(scored_edges, minimum_score)
     components = RelationshipGraphService.connected_components(node_rows, edges)

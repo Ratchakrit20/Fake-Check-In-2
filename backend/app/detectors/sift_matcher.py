@@ -47,8 +47,10 @@ class SIFTMatcher:
         digest.update(rgb.tobytes())
         return digest.hexdigest()
 
-    def _features(self, image: Image.Image) -> tuple[list, np.ndarray | None, tuple[int, int]]:
+    def _features(self, image: Image.Image, exclusion_mask: np.ndarray | None = None) -> tuple[list, np.ndarray | None, tuple[int, int]]:
         key = self._cache_key(image)
+        if exclusion_mask is not None:
+            key = hashlib.sha256((key + hashlib.sha256(exclusion_mask.tobytes()).hexdigest()).encode()).hexdigest()
         with self._cache_lock:
             cached = self._cache.get(key)
             if cached is not None:
@@ -63,13 +65,20 @@ class SIFTMatcher:
             return future.result()
         try:
             gray = self._gray(image)
+            sift_mask = None
+            if exclusion_mask is not None:
+                sift_mask = cv2.resize(
+                    exclusion_mask.astype(np.uint8),
+                    (gray.shape[1], gray.shape[0]),
+                    interpolation=cv2.INTER_NEAREST,
+                )
             # A detector per uncached image keeps OpenCV work thread-safe.
             detector = cv2.SIFT_create(
                 contrastThreshold=self.contrast_threshold,
                 edgeThreshold=self.edge_threshold,
                 sigma=self.sigma,
             )
-            keypoints, descriptors = detector.detectAndCompute(gray, None)
+            keypoints, descriptors = detector.detectAndCompute(gray, sift_mask)
             result = (keypoints, descriptors, (gray.shape[1], gray.shape[0]))
             with self._cache_lock:
                 self._cache[key] = result
@@ -85,9 +94,15 @@ class SIFTMatcher:
             future.set_exception(exc)
             raise
 
-    def match(self, first: Image.Image, second: Image.Image) -> SiftResult:
-        keypoints_a, descriptors_a, size_a = self._features(first)
-        keypoints_b, descriptors_b, size_b = self._features(second)
+    def match(
+        self,
+        first: Image.Image,
+        second: Image.Image,
+        exclusion_mask_a: np.ndarray | None = None,
+        exclusion_mask_b: np.ndarray | None = None,
+    ) -> SiftResult:
+        keypoints_a, descriptors_a, size_a = self._features(first, exclusion_mask_a)
+        keypoints_b, descriptors_b, size_b = self._features(second, exclusion_mask_b)
         result = SiftResult(
             keypoint_count_a=len(keypoints_a),
             keypoint_count_b=len(keypoints_b),

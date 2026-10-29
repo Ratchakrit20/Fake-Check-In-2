@@ -60,6 +60,24 @@ class FaissVectorStore(VectorStore):
             self.faiss.write_index(self.index, str(self.index_path))
             self.metadata_path.write_text(json.dumps(self.ids), encoding="utf-8")
 
+    def remove_many(self, image_ids: set[str]) -> None:
+        """Remove ineligible images from the persisted candidate index only."""
+        if not image_ids:
+            return
+        with self.lock:
+            positions = np.fromiter(
+                (index for index, image_id in enumerate(self.ids) if image_id in image_ids),
+                dtype=np.int64,
+            )
+            if positions.size == 0:
+                return
+            self.index.remove_ids(positions)
+            self.ids = [image_id for image_id in self.ids if image_id not in image_ids]
+            self.index_path.parent.mkdir(parents=True, exist_ok=True)
+            self.metadata_path.parent.mkdir(parents=True, exist_ok=True)
+            self.faiss.write_index(self.index, str(self.index_path))
+            self.metadata_path.write_text(json.dumps(self.ids), encoding="utf-8")
+
     def search(self, vector: np.ndarray, top_k: int) -> list[tuple[str, float]]:
         if not self.ids:
             return []

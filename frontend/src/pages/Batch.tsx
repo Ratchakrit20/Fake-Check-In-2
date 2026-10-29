@@ -23,6 +23,7 @@ import {
 
 const stageNames: Record<string, string> = {
   QUEUED: "กำลังวิเคราะห์รูปภาพ",
+  VALIDATING: "กำลังตรวจคุณภาพภาพ",
   EMBEDDING: "กำลังเตรียมภาพสำหรับวิเคราะห์",
   SEARCHING: "กำลังค้นหาภาพที่อาจเกี่ยวข้อง",
   VERIFYING: "กำลังตรวจสอบคู่ภาพ",
@@ -40,6 +41,7 @@ export function Batch() {
   const [groups, setGroups] = useState<ImageGroup[]>([]);
   const [error, setError] = useState(""),
     [uploading, setUploading] = useState(false);
+  const [qualityNotice, setQualityNotice] = useState("");
   const fileInput = useRef<HTMLInputElement>(null),
     folderInput = useRef<HTMLInputElement>(null);
 
@@ -123,6 +125,7 @@ export function Batch() {
     setFiles(withinLimits ? valid : []);
     replaceJob(null);
     setGroups([]);
+    setQualityNotice("");
     setError(
       chosen.length > 5000
         ? "เลือกได้สูงสุดครั้งละ 5,000 ไฟล์"
@@ -139,6 +142,11 @@ export function Batch() {
     setError("");
     try {
       const created = await createBatch(files);
+      setQualityNotice(
+        created.unverifiable_count
+          ? `มี ${created.unverifiable_count.toLocaleString()} ภาพที่มืดเกินเกณฑ์ ระบบจะบันทึกเป็น “ตรวจสอบองค์ประกอบไม่ได้” และไม่นำไปจับคู่`
+          : "",
+      );
       replaceJob({
         id: created.job_id,
         status: created.status,
@@ -288,6 +296,7 @@ export function Batch() {
         )}
       </div>
       {error && <div className="error">{error}</div>}
+      {qualityNotice && <div className="working-note">{qualityNotice}</div>}
       {job && ["FAILED", "INTERRUPTED", "CANCELLED"].includes(job.status) && job.processed < job.total && (
         <button className="reanalyze" disabled={uploading} onClick={resume}>
           <RotateCcw size={18} /> ทำต่อจากจุดเดิม ({job.processed.toLocaleString()}/{job.total.toLocaleString()})

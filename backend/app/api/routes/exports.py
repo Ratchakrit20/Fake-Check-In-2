@@ -1,23 +1,28 @@
 from __future__ import annotations
 
 import io
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from uuid import uuid4
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import FileResponse
+from PIL import Image, ImageDraw, ImageFont, ImageOps
 from pydantic import BaseModel, Field
-from PIL import Image, ImageDraw, ImageFont
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...core.config import get_settings
 from ...db.models import ExportReport, ExportReportImage, ImageRecord, PairwiseResult
 from ...db.session import get_session
+from ...services.ai_image_metadata import is_soa_metadata_scanned, parse_datetime_boxes, serialize_ai_metadata
+from ...services.ai_model_service import AIModelService
+from ...services.image_metadata_service import extract_capture_datetime
+from ...services.image_source_service import resolve_image_source
 from ...services.relationship_group_service import build_reportable_groups, build_reportable_groups_as_of, merge_report_groups_by_customer
 from ...services.relationship_policy import REPORTABLE_CLASSIFICATIONS
-from ...services.image_source_service import resolve_image_source
+from ...services.summary_export_service import create_summary_workbook
 from ...storage.local_storage import LocalImageStorage
 
 router = APIRouter(prefix="/exports", tags=["exports"])
@@ -146,6 +151,141 @@ async def create_export_pdf(request: CreateExportRequest, session: AsyncSession 
     export_dir.mkdir(parents=True, exist_ok=True)
     report_id = str(uuid4())
     pdf_path = export_dir / f"export-{report_id}.pdf"
+    summary_path = export_dir / f"summary-{report_id}.xlsx"
+    storage = LocalImageStorage(settings.storage.root)
+
+    classification_labels = {
+        "exact_file": "ไฟล์ภาพเดียวกัน",
+        "same_image": "ภาพเดียวกัน",
+        "edited_or_cropped": "ภาพถูกปรับแต่งหรือตัดบางส่วน",
+    }
+    group_by_image_id = {
+        image.id: group_index
+        for group_index, (_, group) in enumerate(selected_groups)
+        for image in group
+    }
+    images_by_id = {
+        image.id: image
+        for _, group in selected_groups
+        for image in group
+    }
+
+    def bangkok_datetime(value: datetime | None) -> datetime | None:
+        if value is None:
+            return None
+        if value.tzinfo is None:
+            value = value.replace(tzinfo=UTC)
+        return value.astimezone(ZoneInfo("Asia/Bangkok")).replace(tzinfo=None)
+
+    summary_pairs = [
+        pair
+        for pair in pairs
+        if (
+            pair.relationship_level in REPORTABLE_CLASSIFICATIONS
+            and pair.relationship_score >= minimum_score
+            and group_by_image_id.get(pair.image_a_id) is not None
+            and group_by_image_id.get(pair.image_a_id) == group_by_image_id.get(pair.image_b_id)
+        )
+    ]
+    source_by_image_id = {image_id: resolve_image_source(image) for image_id, image in images_by_id.items()}
+    unscanned_report_images = [
+        image for image in images_by_id.values()
+        if not is_soa_metadata_scanned(image.ai_metadata_json)
+    ]
+    if unscanned_report_images:
+        detector = AIModelService(settings.ai_models_lat_long)
+        for image in unscanned_report_images:
+            image_path = storage.resolve(image.id, image.storage_path)
+            if image_path is None:
+                continue
+            try:
+                with Image.open(image_path) as opened:
+                    normalized_image = ImageOps.exif_transpose(opened).convert("RGB")
+                    image.ai_metadata_json = serialize_ai_metadata(detector.report_metadata(normalized_image))
+            except (OSError, ValueError):
+                continue
+    captured_at_by_image: dict[str, str | None] = {}
+    image_path_by_image: dict[str, Path | None] = {}
+
+    def capture_time_for(image_id: str) -> str | None:
+        if image_id not in captured_at_by_image:
+            image = images_by_id[image_id]
+            captured_at = image.source_captured_at
+            image_path = storage.resolve(image.id, image.storage_path)
+            image_path_by_image[image_id] = image_path
+            if not captured_at and image_path:
+                try:
+                    with Image.open(image_path) as opened:
+                        captured_at = extract_capture_datetime(opened)
+                    if captured_at:
+                        image.source_captured_at = captured_at
+                except (OSError, ValueError):
+                    captured_at = None
+            if not captured_at:
+                checkin_date = source_by_image_id[image_id].checkin_date
+                if checkin_date and len(checkin_date) == 8 and checkin_date.isdigit():
+                    captured_at = f"{checkin_date[6:8]}/{checkin_date[4:6]}/{checkin_date[:4]}"
+                else:
+                    captured_at = checkin_date
+            captured_at_by_image[image_id] = captured_at
+        return captured_at_by_image[image_id]
+
+    summary_rows: list[dict[str, object]] = []
+    for pair in summary_pairs:
+        image_a = images_by_id[pair.image_a_id]
+        image_b = images_by_id[pair.image_b_id]
+        source_a, source_b = source_by_image_id[image_a.id], source_by_image_id[image_b.id]
+        checked_at = bangkok_datetime(pair.created_at) or bangkok_datetime(image_a.analyzed_at)
+        summary_rows.append({
+            "checked_at": checked_at,
+            "detect_category": "ภาพซ้ำ",
+            "detect_sub_category": classification_labels.get(pair.relationship_level, pair.relationship_level),
+            "image_a_technician_id": source_a.technician_id,
+            "image_b_technician_id": source_b.technician_id,
+            "image_a_customer_id": source_a.customer_id,
+            "image_b_customer_id": source_b.customer_id,
+            "image_a_filename": image_a.original_filename,
+            "image_a_captured_at": capture_time_for(image_a.id),
+            "image_a_job_type": source_a.job_type,
+            "image_b_filename": image_b.original_filename,
+            "image_b_captured_at": capture_time_for(image_b.id),
+            "image_b_job_type": source_b.job_type,
+            "_sort_date": min(source_a.checkin_date or "", source_b.checkin_date or ""),
+            "_sort_customer": min(source_a.customer_id or "", source_b.customer_id or ""),
+            "_sort_job_type": min(source_a.job_type or "", source_b.job_type or ""),
+        })
+    export_checked_at = bangkok_datetime(datetime.now(UTC))
+    for image in images_by_id.values():
+        if not parse_datetime_boxes(image.ai_metadata_json):
+            continue
+        source = source_by_image_id[image.id]
+        summary_rows.append({
+            "checked_at": bangkok_datetime(image.analyzed_at) or export_checked_at,
+            "detect_category": "ถ่ายภาพซ้อนจอ",
+            "detect_sub_category": "ตรวจพบกรอบ datetime (SOA)",
+            "image_a_technician_id": source.technician_id,
+            "image_b_technician_id": None,
+            "image_a_customer_id": source.customer_id,
+            "image_b_customer_id": None,
+            "image_a_filename": image.original_filename,
+            "image_a_captured_at": capture_time_for(image.id),
+            "image_a_job_type": source.job_type,
+            "image_b_filename": None,
+            "image_b_captured_at": None,
+            "image_b_job_type": None,
+            "_sort_date": source.checkin_date or "",
+            "_sort_customer": source.customer_id or "",
+            "_sort_job_type": source.job_type or "",
+        })
+    summary_rows.sort(
+        key=lambda row: (
+            str(row.get("_sort_date", "")),
+            str(row.get("_sort_customer", "")),
+            str(row.get("_sort_job_type", "")),
+            str(row.get("checked_at", "")),
+        )
+    )
+    summary_path.write_bytes(create_summary_workbook(summary_rows))
     canvas = Canvas(str(pdf_path), pagesize=A4)
     font_dir = Path(__file__).parents[4] / "font" / "Sarabun"
     thai_font, thai_bold_font = "Sarabun", "Sarabun-Bold"
@@ -155,7 +295,6 @@ async def create_export_pdf(request: CreateExportRequest, session: AsyncSession 
     green, orange, soft_green, muted = HexColor("#12372A"), HexColor("#F59E0B"), HexColor("#F3F8F5"), HexColor("#60756C")
     summary_header_bg = HexColor("#458050")
     summary_text = HexColor("#000000")
-    storage = LocalImageStorage(settings.storage.root)
     logo = Path(__file__).parents[4] / "frontend" / "public" / "AIS-3BB-Fibre3-FullColor-DarkBG.png"
     margin, gap, columns = 36, 8, 4
     card_width = (width - margin * 2 - gap * (columns - 1)) / columns
@@ -246,7 +385,7 @@ async def create_export_pdf(request: CreateExportRequest, session: AsyncSession 
         canvas.setFont(thai_bold_font, 10)
         canvas.drawString(margin, height - 127, f"Customer ID in report: {len(report_customer_ids)}")
         canvas.setFont(thai_font, 10)
-        canvas.drawString(margin, height - 143, f"Export Date: {datetime.now().strftime('%d-%m-%Y')}")
+        canvas.drawString(margin, height - 143, f"Export Date: {datetime.now(ZoneInfo('Asia/Bangkok')).strftime('%d-%m-%Y')}")
         canvas.setFillColor(muted)
         canvas.setFont(thai_font, 9)
         canvas.drawRightString(width - margin, 25, f"Page {page_number}")
@@ -345,6 +484,66 @@ async def create_export_pdf(request: CreateExportRequest, session: AsyncSession 
         canvas.setFillColor(muted)
         canvas.setFont(thai_font, 7)
         canvas.drawString(x + 7, y_position - 127, filename[:28] + ("..." if len(filename) > 28 else ""))
+
+    def draw_soa_image_row(image: ImageRecord, box: tuple[int, int, int, int, float], y_position: float) -> None:
+        x1, y1, x2, y2, confidence = box
+        resolved = storage.resolve(image.id, image.storage_path)
+        if resolved is None:
+            return
+        try:
+            with Image.open(resolved) as opened:
+                normalized = ImageOps.exif_transpose(opened).convert("RGB")
+                x1, x2 = max(0, x1), min(normalized.width, x2)
+                y1, y2 = max(0, y1), min(normalized.height, y2)
+                if x2 <= x1 or y2 <= y1:
+                    return
+                pad_x, pad_y = max(4, int((x2 - x1) * 0.15)), max(4, int((y2 - y1) * 0.35))
+                crop = normalized.crop((max(0, x1 - pad_x), max(0, y1 - pad_y), min(normalized.width, x2 + pad_x), min(normalized.height, y2 + pad_y)))
+                context_bytes, crop_bytes = io.BytesIO(), io.BytesIO()
+                normalized.save(context_bytes, format="JPEG", quality=82)
+                crop.save(crop_bytes, format="JPEG", quality=88)
+        except (OSError, ValueError):
+            return
+
+        row_top, row_height = y_position - 3, 96
+        row_bottom = row_top - row_height
+        canvas.setFillColor(soft_green)
+        canvas.roundRect(margin, row_bottom, width - 2 * margin, row_height, 6, fill=1, stroke=0)
+        context_x, context_top, context_width, context_height = margin + 8, row_top - 8, 142, 80
+        scale = min(context_width / normalized.width, context_height / normalized.height)
+        drawn_width, drawn_height = normalized.width * scale, normalized.height * scale
+        drawn_x = context_x + (context_width - drawn_width) / 2
+        drawn_y = context_top - drawn_height
+        canvas.drawImage(ImageReader(context_bytes), drawn_x, drawn_y, drawn_width, drawn_height, mask="auto")
+        canvas.setStrokeColor(HexColor("#E11D48"))
+        canvas.setLineWidth(1.4)
+        canvas.rect(
+            drawn_x + x1 * scale,
+            drawn_y + (normalized.height - y2) * scale,
+            (x2 - x1) * scale,
+            (y2 - y1) * scale,
+            fill=0,
+            stroke=1,
+        )
+        crop_x, crop_top, crop_width, crop_height = margin + 160, row_top - 8, 120, 80
+        crop_scale = min(crop_width / crop.width, crop_height / crop.height)
+        canvas.drawImage(
+            ImageReader(crop_bytes),
+            crop_x + (crop_width - crop.width * crop_scale) / 2,
+            crop_top - crop.height * crop_scale,
+            crop.width * crop_scale,
+            crop.height * crop_scale,
+            mask="auto",
+        )
+        source = resolve_image_source(image)
+        info_x, info_top = margin + 292, row_top - 18
+        draw_thai_text(f"Customer ID: {source.customer_id or '-'}", info_x, info_top, 8, "#12372A")
+        draw_thai_text(f"วันที่: {format_card_date(source.checkin_date)}", info_x, info_top - 18, 8, "#3F5146")
+        draw_thai_text(f"ภาพซ้อนจอ (SOA) · พบ datetime {confidence:.0%}", info_x, info_top - 36, 8, "#9A3412")
+        filename = image.original_filename
+        filename_lines = wrap_thai_text(filename, width - margin - info_x, 7)
+        for index, line in enumerate(filename_lines[:2]):
+            draw_thai_text(line, info_x, info_top - 54 - index * 10, 7, "#60756C")
 
     page_number = 1
     y = draw_header(page_number)
@@ -447,8 +646,79 @@ async def create_export_pdf(request: CreateExportRequest, session: AsyncSession 
         canvas.setLineWidth(0.7)
         canvas.line(margin, y + 12, width - margin, y + 12)
         y -= 25
+
+    soa_by_technician: dict[str, dict[str, list[tuple[ImageRecord, tuple[int, int, int, int, float]]]]] = {}
+    for image in images_by_id.values():
+        boxes = parse_datetime_boxes(image.ai_metadata_json)
+        if not boxes:
+            continue
+        source = source_by_image_id[image.id]
+        technician = source.technician_id or "ไม่ระบุ"
+        customer = source.customer_id or "ไม่ระบุ"
+        best_box = max(boxes, key=lambda item: item[4])
+        soa_by_technician.setdefault(technician, {}).setdefault(customer, []).append((image, best_box))
+
+    soa_count = sum(len(images_for_customer) for customers in soa_by_technician.values() for images_for_customer in customers.values())
+    section_title = "ภาพซ้อนจอ (SOA) — ตรวจพบกรอบ datetime"
+
+    def draw_soa_section_title(y_position: float) -> float:
+        draw_thai_text(section_title, margin, y_position, 12, "#315C46")
+        draw_thai_text(
+            f"พบภาพ {soa_count:,} ภาพ จาก {len(soa_by_technician):,} Technician ID ในกลุ่มของรายงาน",
+            margin,
+            y_position - 18,
+            8,
+            "#60756C",
+        )
+        return y_position - 42
+
+    if y - 56 < margin:
+        canvas.showPage()
+        page_number += 1
+        y = draw_header(page_number)
+    y = draw_soa_section_title(y)
+    if not soa_count:
+        draw_thai_text("ไม่พบภาพที่ตรวจพบกรอบ datetime ในกลุ่มของรายงานนี้", margin, y, 9, "#60756C")
+        y -= 22
+    else:
+        for technician, customers in sorted(soa_by_technician.items()):
+            if y - 24 < margin + 96:
+                canvas.showPage()
+                page_number += 1
+                y = draw_soa_section_title(draw_header(page_number))
+            draw_thai_text(f"Technician ID: {technician}", margin, y, 10, "#12372A")
+            y -= 20
+            for customer, customer_images in sorted(customers.items()):
+                if y - 20 < margin + 96:
+                    canvas.showPage()
+                    page_number += 1
+                    y = draw_soa_section_title(draw_header(page_number))
+                    draw_thai_text(f"Technician ID: {technician}", margin, y, 10, "#12372A")
+                    y -= 20
+                draw_thai_text(f"Customer ID: {customer}", margin + 10, y, 8, "#3F5146")
+                y -= 15
+                for image, box in sorted(customer_images, key=lambda item: (resolve_image_source(item[0]).checkin_date or "", item[0].original_filename)):
+                    if y - 102 < margin:
+                        canvas.showPage()
+                        page_number += 1
+                        y = draw_soa_section_title(draw_header(page_number))
+                        draw_thai_text(f"Technician ID: {technician}", margin, y, 10, "#12372A")
+                        y -= 20
+                        draw_thai_text(f"Customer ID: {customer}", margin + 10, y, 8, "#3F5146")
+                        y -= 15
+                    draw_soa_image_row(image, box, y)
+                    y -= 104
+                y -= 5
+            y -= 7
     canvas.save()
-    report = ExportReport(id=report_id, date_from=report_date_from, date_to=report_date_to, pdf_path=str(pdf_path), created_at=datetime.utcnow())
+    report = ExportReport(
+        id=report_id,
+        date_from=report_date_from,
+        date_to=report_date_to,
+        pdf_path=str(pdf_path),
+        summary_xlsx_path=str(summary_path),
+        created_at=datetime.now(UTC).replace(tzinfo=None),
+    )
     session.add(report)
     for image, group_id in report_images.values():
         source = resolve_image_source(image)
@@ -457,6 +727,7 @@ async def create_export_pdf(request: CreateExportRequest, session: AsyncSession 
     return {
         "report_id": report_id,
         "download_url": f"/api/v1/exports/reports/{report_id}",
+        "summary_download_url": f"/api/v1/exports/reports/{report_id}/summary",
     }
 
 
@@ -470,4 +741,19 @@ async def download_export_pdf(report_id: str, session: AsyncSession = Depends(ge
         media_type="application/pdf",
         # filename=f"AI-Inspector-Report-{report.date_from}-{report.date_to}.pdf",
         filename=f"AI-Inspector-Report-{report.date_to}.pdf",
+    )
+
+
+@router.get("/reports/{report_id}/summary")
+async def download_export_summary(report_id: str, session: AsyncSession = Depends(get_session)) -> FileResponse:
+    report = await session.get(ExportReport, report_id)
+    if report is None or not report.summary_xlsx_path or not Path(report.summary_xlsx_path).is_file():
+        raise HTTPException(status_code=404, detail="ไม่พบไฟล์ Excel summary")
+    date_label = report.date_to
+    if len(date_label) == 8 and date_label.isdigit():
+        date_label = f"{date_label[6:8]}-{date_label[4:6]}-{date_label[:4]}"
+    return FileResponse(
+        report.summary_xlsx_path,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        filename=f"AI-Inspector Summary ({date_label}).xlsx",
     )

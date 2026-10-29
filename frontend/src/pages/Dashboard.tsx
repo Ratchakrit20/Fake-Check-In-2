@@ -30,6 +30,9 @@ const fallback: DashboardData = {
   failed_jobs: 0,
   images_in_system: 0,
   reused_images: 0,
+  soa_images: 0,
+  soa_scanned_images: 0,
+  soa_pending_images: 0,
   total_jobs: 0,
   reused_jobs: 0,
   duplicate_jobs: [],
@@ -45,6 +48,7 @@ const fallback: DashboardData = {
       cross_date_customer_ids: 0,
       technician_ids: 0,
       cross_dates: [],
+      soa_images: 0,
     },
   },
 };
@@ -316,8 +320,8 @@ export function Dashboard() {
             }}
           >
             {exporting
-              ? "กำลังสร้าง PDF..."
-              : `Export PDF (${selectedBbids.length})`}
+              ? "กำลังสร้าง PDF และ Excel..."
+              : `Export PDF + Excel (${selectedBbids.length})`}
           </button>
         </div>
         <div className="export-controls">

@@ -1,7 +1,7 @@
 from backend.app.db.models import ImageRecord
 from backend.app.services.batch_analysis_service import same_submission, unique_records_by_id
 from backend.app.services.image_source_service import resolve_image_source
-from backend.app.services.source_filename import parse_source_reference
+from backend.app.services.source_filename import parse_job_type, parse_source_reference
 
 
 def test_unique_records_by_id_removes_duplicate_batch_items():
@@ -21,7 +21,15 @@ def test_source_parser_supports_home_and_splitter_names():
 
     assert first and first.job_number == "8884162504"
     assert first.checkin_date == "20260813"
+    assert first.job_type == "new"
     assert second and second.job_number == "8807045814"
+
+
+def test_job_type_parser_supports_each_upload_job_type_without_customer_id():
+    assert [
+        parse_job_type(f"{job_type}_20261001_upload.jpg")
+        for job_type in ("new", "ma-mat", "ma-new", "ma-splice")
+    ] == ["new", "ma-mat", "ma-new", "ma-splice"]
 
 
 def test_source_parser_rejects_unknown_or_non_ten_digit_names():

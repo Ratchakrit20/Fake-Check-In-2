@@ -27,6 +27,9 @@ const emptyData: DashboardData = {
   failed_jobs: 0,
   images_in_system: 0,
   reused_images: 0,
+  soa_images: 0,
+  soa_scanned_images: 0,
+  soa_pending_images: 0,
   total_jobs: 0,
   reused_jobs: 0,
   duplicate_jobs: [],
@@ -42,6 +45,7 @@ const emptyData: DashboardData = {
       cross_date_customer_ids: 0,
       technician_ids: 0,
       cross_dates: [],
+      soa_images: 0,
     },
   },
 };
@@ -232,6 +236,26 @@ export function InsightsDashboard() {
             </span>
           </div>
         </section>
+        <section className="panel insight-donut-panel soa-donut-panel">
+          <div>
+            <h2>ภาพจาก SOA</h2>
+            <p>นับภาพไม่ซ้ำที่ตรวจพบกรอบ datetime ในช่วงวันที่เลือก</p>
+          </div>
+          <DonutChart
+            value={data.soa_images}
+            total={data.soa_scanned_images}
+            label="ภาพจาก SOA"
+          />
+          <div className="insight-totals">
+            <span>พบ SOA <b>{data.soa_images.toLocaleString()}</b></span>
+            <span>สแกนแล้ว <b>{data.soa_scanned_images.toLocaleString()}</b></span>
+          </div>
+          {data.soa_pending_images > 0 && (
+            <p className="cross-date-note">
+              ยังสแกนภาพเก่าอีก {data.soa_pending_images.toLocaleString()} ภาพ
+            </p>
+          )}
+        </section>
         <section className="panel insight-donut-panel">
           <div>
             <h2>สัดส่วน Customer ID</h2>
@@ -315,13 +339,13 @@ export function InsightsDashboard() {
                 toApiDate(exportDate),
               )
                 .catch(() =>
-                  setExportError("สร้าง PDF ไม่สำเร็จ กรุณาลองอีกครั้ง"),
+                  setExportError("สร้างรายงาน PDF และ Excel ไม่สำเร็จ กรุณาลองอีกครั้ง"),
                 )
                 .finally(() => setExporting(false));
             }}
           >
             <FileDown size={18} />
-            {exporting ? "กำลังสร้าง PDF..." : "Export PDF"}
+            {exporting ? "กำลังสร้าง PDF และ Excel..." : "Export PDF + Excel"}
           </button>
         </div>
         <div className="export-date-filter">
@@ -374,6 +398,10 @@ export function InsightsDashboard() {
             <div>
               <span>Technician ID ในรายงาน</span>
               <strong>{preview.technician_ids.toLocaleString()}</strong>
+            </div>
+            <div>
+              <span>ภาพจาก SOA ในรายงาน</span>
+              <strong>{preview.soa_images.toLocaleString()}</strong>
             </div>
           </div>
         ) : (

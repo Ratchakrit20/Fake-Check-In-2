@@ -76,12 +76,13 @@ class RequestSizeLimitMiddleware:
 async def lifespan(_: FastAPI):
     if hardware is not None:
         logging.getLogger(__name__).info(
-            "runtime profile: device=%s vram=%.2fGB cpu=%d pair_workers=%d opencv_threads=%d embedding_batch=%d",
+            "runtime profile: device=%s vram=%.2fGB cpu=%d pair_workers=%d opencv_threads=%d torch_threads=%d embedding_batch=%d",
             hardware.device,
             hardware.vram_gb,
             hardware.logical_cpus,
             hardware.pair_workers,
             hardware.opencv_threads,
+            hardware.torch_threads,
             hardware.embedding_batch_size,
         )
     else:

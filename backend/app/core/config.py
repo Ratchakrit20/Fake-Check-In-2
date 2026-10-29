@@ -101,6 +101,24 @@ class BodyPartsConfig(BaseModel):
     single_part_suspect_min_inliers: int = Field(gt=0)
 
 
+class LatLongModelConfig(BaseModel):
+    enabled: bool = True
+    model_path: Path = Path("data/models/lat-long/v1.pt")
+    device: str = "auto"
+    image_size: int = Field(default=640, ge=320, le=2048)
+    lat_long_confidence: float = Field(default=0.90, gt=0, lt=1)
+    datetime_enabled: bool = False
+    datetime_confidence: float = Field(default=0.95, gt=0, lt=1)
+    datetime_report_confidence: float = Field(default=0.95, gt=0, lt=1)
+    cache_size: int = Field(default=8192, gt=0)
+
+
+class ImageQualityConfig(BaseModel):
+    near_black_luminance_max: int = Field(default=16, ge=0, le=255)
+    unverifiable_near_black_ratio: float = Field(default=0.90, gt=0, le=1)
+    sample_max_dimension: int = Field(default=256, ge=32, le=1024)
+
+
 class RelationshipWeights(BaseModel):
     phash: float = Field(ge=0)
     embedding: float = Field(ge=0)
@@ -189,6 +207,8 @@ class Settings(BaseModel):
     ransac: RansacConfig
     flip_detection: FlipConfig
     body_parts: BodyPartsConfig
+    ai_models_lat_long: LatLongModelConfig
+    image_quality: ImageQualityConfig
     relationship: RelationshipConfig
     jobs: JobsConfig
     performance: PerformanceConfig
@@ -237,6 +257,7 @@ def get_settings() -> Settings:
         (settings.vector_search, "metadata_path"),
         (settings.body_parts, "model_path"),
         (settings.body_parts, "config_dir"),
+        (settings.ai_models_lat_long, "model_path"),
     )
     for section, field_name in path_fields:
         field = getattr(section, field_name)

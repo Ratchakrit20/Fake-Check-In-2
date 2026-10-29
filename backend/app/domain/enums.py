@@ -8,6 +8,7 @@ class RelationshipLevel(StrEnum):
     POSSIBLY_RELATED = "POSSIBLY_RELATED"
     LOW_RELATION = "LOW_RELATION"
     UNRELATED = "UNRELATED"
+    UNVERIFIABLE = "UNVERIFIABLE"
 
 
 class RelationClassification(StrEnum):
@@ -19,12 +20,14 @@ class RelationClassification(StrEnum):
     SAME_SCENE_NEW_CAPTURE = "same_scene_new_capture"
     REPEATED_CHECKIN = "repeated_checkin"
     UNRELATED = "unrelated"
+    UNVERIFIABLE = "unverifiable"
 
 
 class ReuseVerdict(StrEnum):
     REUSED = "reused"
     REVIEW = "review"
     NOT_REUSED = "not_reused"
+    UNVERIFIABLE = "unverifiable"
 
 
 class JobStatus(StrEnum):

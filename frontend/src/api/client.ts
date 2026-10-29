@@ -2,7 +2,7 @@ export type RelationshipResult = {
   score: number;
   decision: string;
   classification: string;
-  reuse_verdict: "reused" | "review" | "not_reused";
+  reuse_verdict: "reused" | "review" | "not_reused" | "unverifiable";
   reasons: string[];
   evidence: Record<string, unknown>;
   visualizations: Record<string, string>;
@@ -79,7 +79,23 @@ export async function exportBbidsPdf(customerIds: string[], dateFrom: string, da
     const error = await response.json().catch(() => ({ detail: "สร้าง PDF ไม่สำเร็จ" }));
     throw new Error(error.detail ?? "สร้าง PDF ไม่สำเร็จ");
   }
-  const payload = await response.json() as { download_url: string };
+  const payload = await response.json() as { download_url: string; summary_download_url?: string };
+  if (payload.summary_download_url) {
+    const summaryResponse = await fetch(`${API_ORIGIN}${payload.summary_download_url}`);
+    if (!summaryResponse.ok) throw new Error("สร้าง Excel summary แล้ว แต่ดาวน์โหลดไฟล์ไม่สำเร็จ");
+    const summaryBlob = await summaryResponse.blob();
+    const summaryObjectUrl = URL.createObjectURL(summaryBlob);
+    const summaryLink = document.createElement("a");
+    const displayDate = dateTo.length === 8
+      ? `${dateTo.slice(6, 8)}-${dateTo.slice(4, 6)}-${dateTo.slice(0, 4)}`
+      : dateTo;
+    summaryLink.href = summaryObjectUrl;
+    summaryLink.download = `AI-Inspector Summary (${displayDate}).xlsx`;
+    document.body.appendChild(summaryLink);
+    summaryLink.click();
+    summaryLink.remove();
+    window.setTimeout(() => URL.revokeObjectURL(summaryObjectUrl), 30_000);
+  }
   // Let the browser navigate to the PDF response directly instead of reading
   // a large PDF stream with fetch. This avoids ERR_FAILED after HTTP 200.
   window.location.assign(`${API_ORIGIN}${payload.download_url}`);
@@ -97,6 +113,9 @@ export type DashboardData = {
   failed_jobs: number;
   images_in_system: number;
   reused_images: number;
+  soa_images: number;
+  soa_scanned_images: number;
+  soa_pending_images: number;
   total_jobs: number;
   reused_jobs: number;
   duplicate_jobs: Array<{ job_number: string; images_in_system: number; reused_images: number; evidence_links: number }>;
@@ -110,6 +129,7 @@ export type DashboardInsights = {
     reused_images: number;
     total_customer_ids: number;
     reused_customer_ids: number;
+    soa_images: number;
   }>;
   technicians: Array<{ technician_id: string; reused_customer_ids: number }>;
   export_preview: {
@@ -121,6 +141,7 @@ export type DashboardInsights = {
     cross_date_customer_ids: number;
     technician_ids: number;
     cross_dates: string[];
+    soa_images: number;
   };
 };
 
@@ -137,7 +158,7 @@ export function downloadDashboardReport(totalImages: number) {
   window.location.href = `${API}/dashboard/report.xlsx?total_images=${Math.max(0, Math.trunc(totalImages))}`;
 }
 
-export async function createBatch(files: File[]): Promise<{ job_id: string; status: string; file_count: number }> {
+export async function createBatch(files: File[]): Promise<{ job_id: string; status: string; file_count: number; unverifiable_count: number }> {
   const body = new FormData();
   files.forEach(file => body.append("files", file));
   const response = await fetch(`${API}/batches`, { method: "POST", body });

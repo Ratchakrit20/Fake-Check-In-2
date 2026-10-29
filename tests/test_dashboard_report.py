@@ -1,4 +1,5 @@
 import io
+import json
 import zipfile
 
 from backend.app.api.routes.exports import technician_customer_counts
@@ -82,3 +83,43 @@ def test_export_preview_splits_customer_ids_by_selected_and_other_dates():
 
     assert preview["selected_date_customer_ids"] == 2
     assert preview["cross_date_customer_ids"] == 1
+
+
+def test_dashboard_counts_distinct_soa_images_and_report_preview_images():
+    selected = ImageRecord(
+        id="soa-a",
+        original_filename="a.jpg",
+        source_technician_id="T01",
+        source_job_number="C001",
+        source_checkin_date="20261001",
+        ai_metadata_json=json.dumps({"model": "lat-long/v1", "datetime": [{"bbox": [1, 2, 10, 12], "confidence": 0.98}]}),
+    )
+    related = ImageRecord(
+        id="plain-b",
+        original_filename="b.jpg",
+        source_technician_id="T02",
+        source_job_number="C002",
+        source_checkin_date="20261002",
+        ai_metadata_json=json.dumps({"model": "lat-long/v1", "datetime": []}),
+    )
+    pair = PairwiseResult(
+        image_a_id=selected.id,
+        image_b_id=related.id,
+        relationship_score=0.9,
+        relationship_level="exact_file",
+    )
+    images = [selected, related]
+    sources = {image.id: resolve_image_source(image) for image in images}
+
+    insights = build_dashboard_insights(
+        images,
+        images,
+        {selected.id, related.id},
+        sources,
+        [pair],
+        minimum_score=0.5,
+        date_to="20261002",
+    )
+
+    assert sum(item["soa_images"] for item in insights["daily"]) == 1
+    assert insights["export_preview"]["soa_images"] == 1

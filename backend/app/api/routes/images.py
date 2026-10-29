@@ -1,8 +1,10 @@
+import io
 from pathlib import Path
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, File, UploadFile
 from fastapi.responses import FileResponse
+from PIL import Image
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -11,8 +13,10 @@ from ...db.models import ImageRecord
 from ...db.session import get_session
 from ...detectors.perceptual_hash_detector import PerceptualHashDetector
 from ...detectors.sha256_detector import SHA256Detector
+from ...services.image_metadata_service import extract_capture_datetime
+from ...services.image_quality_service import ImageQualityService
 from ...services.image_validation_service import ImageValidationService
-from ...services.source_filename import parse_source_reference
+from ...services.source_filename import parse_job_type, parse_source_reference
 from ...storage.local_storage import LocalImageStorage
 
 router = APIRouter(prefix="/images", tags=["images"])
@@ -24,21 +28,37 @@ async def upload_image(file: UploadFile = File(...), session: AsyncSession = Dep
     content = await file.read()
     metadata = ImageValidationService(settings.app).validate(content)
     sha256 = SHA256Detector.from_bytes(content)
+    quality_service = ImageQualityService(settings.image_quality)
+    with Image.open(io.BytesIO(content)) as image:
+        quality = quality_service.assess(image)
+        captured_at = extract_capture_datetime(image)
     existing = await session.scalar(select(ImageRecord).where(ImageRecord.sha256 == sha256))
     if existing:
         storage = LocalImageStorage(settings.storage.root)
         restored_path = storage.ensure_available(existing.id, existing.storage_path, metadata.suffix, content)
         existing.storage_path = str(restored_path)
+        existing.image_quality_status = quality.status
+        existing.image_quality_reason = quality.reason
+        existing.near_black_ratio = quality.near_black_ratio
+        if not quality.can_compare:
+            existing.phash = None
+            existing.analysis_status = "UNVERIFIABLE"
         await session.commit()
-        return {"id": existing.id, "status": "EXACT_DUPLICATE", "sha256": sha256}
+        return {
+            "id": existing.id,
+            "status": "EXACT_DUPLICATE" if quality.can_compare else "UNVERIFIABLE",
+            "sha256": sha256,
+            "image_quality_status": quality.status,
+            "near_black_ratio": quality.near_black_ratio,
+        }
     image_id = str(uuid4())
     storage_path = LocalImageStorage(settings.storage.root).save(image_id, metadata.suffix, content)
-    import io
-
-    from PIL import Image
-
     with Image.open(io.BytesIO(content)) as image:
-        phash = PerceptualHashDetector(settings.phash.hash_size, settings.flip_detection.horizontal).calculate(image).original
+        phash = (
+            PerceptualHashDetector(settings.phash.hash_size, settings.flip_detection.horizontal).calculate(image).original
+            if quality.can_compare
+            else None
+        )
     original_filename = Path(file.filename or "image").name
     source_reference = parse_source_reference(original_filename)
     record = ImageRecord(
@@ -47,6 +67,8 @@ async def upload_image(file: UploadFile = File(...), session: AsyncSession = Dep
         source_technician_id=source_reference.technician_id if source_reference else None,
         source_job_number=source_reference.job_number if source_reference else None,
         source_checkin_date=source_reference.checkin_date if source_reference else None,
+        source_job_type=parse_job_type(original_filename),
+        source_captured_at=captured_at,
         storage_path=str(storage_path),
         file_size=len(content),
         width=metadata.width,
@@ -54,11 +76,21 @@ async def upload_image(file: UploadFile = File(...), session: AsyncSession = Dep
         mime_type=metadata.mime_type,
         sha256=sha256,
         phash=phash,
-        analysis_status="HASHED",
+        analysis_status="HASHED" if quality.can_compare else "UNVERIFIABLE",
+        image_quality_status=quality.status,
+        image_quality_reason=quality.reason,
+        near_black_ratio=quality.near_black_ratio,
     )
     session.add(record)
     await session.commit()
-    return {"id": image_id, "status": record.analysis_status, "sha256": sha256, "phash": phash}
+    return {
+        "id": image_id,
+        "status": record.analysis_status,
+        "sha256": sha256,
+        "phash": phash,
+        "image_quality_status": quality.status,
+        "near_black_ratio": quality.near_black_ratio,
+    }
 
 
 @router.get("/{image_id}")

@@ -7,7 +7,7 @@ _SOURCE_REFERENCE_PATTERN = re.compile(
     re.IGNORECASE,
 )
 _DATE_PATTERN = re.compile(
-    r"(?:^|_)(?:new|ma-mat|ma-new|ma-splice)_(?P<date>\d{8}|null)(?:_|$)",
+    r"(?:^|_)(?P<job_type>new|ma-mat|ma-new|ma-splice)_(?P<date>\d{8}|null)(?:_|$)",
     re.IGNORECASE,
 )
 @dataclass(frozen=True)
@@ -17,6 +17,7 @@ class SourceReference:
     job_number: str
     checkin_date: str | None
     technician_id: str | None
+    job_type: str | None = None
 
     @property
     def submission_key(self) -> tuple[str, str | None, str | None]:
@@ -31,10 +32,18 @@ def parse_source_reference(filename: str) -> SourceReference | None:
         return None
     date_match = _DATE_PATTERN.search(basename)
     checkin_date = date_match.group("date") if date_match else None
+    job_type = date_match.group("job_type").lower() if date_match else None
     if checkin_date and checkin_date.lower() == "null":
         checkin_date = None
     return SourceReference(
         job_number=match.group("job_number"),
         checkin_date=checkin_date,
         technician_id=match.group("technician_id"),
+        job_type=job_type,
     )
+
+
+def parse_job_type(filename: str) -> str | None:
+    """Read the job type token even when a filename has no Customer ID token."""
+    match = _DATE_PATTERN.search(Path(filename).name)
+    return match.group("job_type").lower() if match else None
