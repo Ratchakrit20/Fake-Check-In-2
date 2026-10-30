@@ -139,8 +139,8 @@ jobs:
   worker_mode: process # Run AI in a separate local process; production can use Celery.
 performance:
   auto_tune: true
-  cpu_workers: 0 # Choose workers from available CPU cores
-  opencv_threads: 0 # Divide OpenCV threads across pair workers automatically
+  cpu_workers: 6 # Choose workers from available CPU cores
+  opencv_threads: 3 # Divide OpenCV threads across pair workers automatically
   pair_chunk_size: 64
   candidate_min_similarity: 0.50   # SSCD candidate gate; การตัดสินจริงยังต้องผ่าน geometry
 logging:
