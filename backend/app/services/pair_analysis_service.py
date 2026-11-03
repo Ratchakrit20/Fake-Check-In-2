@@ -44,6 +44,10 @@ class PairAnalysisService:
         self.body_parts = BodyPartDetector(settings.body_parts, settings.sift.max_dimension, settings.ransac.reprojection_threshold) if settings.body_parts.enabled else None
         self.scorer = RelationshipScorer(settings.relationship)
 
+    def exact_duplicate_result(self) -> RelationshipResult:
+        """Create the exact-file result without decoding or running pair detectors."""
+        return self.scorer.score(PairEvidence(exact_duplicate=True))
+
     @staticmethod
     def _transform_mask(mask: np.ndarray | None, transpose: Image.Transpose) -> np.ndarray | None:
         if mask is None:
@@ -91,7 +95,7 @@ class PairAnalysisService:
         exact = SHA256Detector.from_bytes(first_content) == SHA256Detector.from_bytes(second_content)
         if exact:
             logger.info("pair analysis: exact duplicate (%.2fs)", perf_counter() - started)
-            return self.scorer.score(PairEvidence(exact_duplicate=True))
+            return self.exact_duplicate_result()
         phash_started = perf_counter()
         hash_a, hash_b = self.phash.calculate(first), self.phash.calculate(second)
         blur_variance_a = ImageQualityDetector.blur_variance(first)

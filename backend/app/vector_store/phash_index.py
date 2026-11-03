@@ -34,6 +34,8 @@ class PerceptualHashIndex:
 
     def add(self, hash_value: str, image_id: str) -> None:
         image_ids = self._image_ids.setdefault(hash_value, [])
+        if image_id in image_ids:
+            return
         image_ids.append(image_id)
         if len(image_ids) > 1:
             return

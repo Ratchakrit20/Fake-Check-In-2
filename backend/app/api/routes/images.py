@@ -1,4 +1,5 @@
 import io
+import json
 from pathlib import Path
 from uuid import uuid4
 
@@ -42,7 +43,15 @@ async def upload_image(file: UploadFile = File(...), session: AsyncSession = Dep
         existing.near_black_ratio = quality.near_black_ratio
         if not quality.can_compare:
             existing.phash = None
+            existing.phash_rotations_json = None
             existing.analysis_status = "UNVERIFIABLE"
+        elif not existing.phash_rotations_json:
+            with Image.open(io.BytesIO(content)) as image:
+                rotations = PerceptualHashDetector(
+                    settings.phash.hash_size, settings.flip_detection.horizontal
+                ).calculate_rotations(image)
+            existing.phash = rotations["0"]
+            existing.phash_rotations_json = json.dumps(rotations, separators=(",", ":"))
         await session.commit()
         return {
             "id": existing.id,
@@ -54,11 +63,13 @@ async def upload_image(file: UploadFile = File(...), session: AsyncSession = Dep
     image_id = str(uuid4())
     storage_path = LocalImageStorage(settings.storage.root).save(image_id, metadata.suffix, content)
     with Image.open(io.BytesIO(content)) as image:
-        phash = (
-            PerceptualHashDetector(settings.phash.hash_size, settings.flip_detection.horizontal).calculate(image).original
+        rotations = (
+            PerceptualHashDetector(settings.phash.hash_size, settings.flip_detection.horizontal).calculate_rotations(image)
             if quality.can_compare
             else None
         )
+    phash = rotations["0"] if rotations else None
+    phash_rotations_json = json.dumps(rotations, separators=(",", ":")) if rotations else None
     original_filename = Path(file.filename or "image").name
     source_reference = parse_source_reference(original_filename)
     record = ImageRecord(
@@ -76,6 +87,7 @@ async def upload_image(file: UploadFile = File(...), session: AsyncSession = Dep
         mime_type=metadata.mime_type,
         sha256=sha256,
         phash=phash,
+        phash_rotations_json=phash_rotations_json,
         analysis_status="HASHED" if quality.can_compare else "UNVERIFIABLE",
         image_quality_status=quality.status,
         image_quality_reason=quality.reason,

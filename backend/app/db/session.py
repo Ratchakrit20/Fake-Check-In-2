@@ -44,6 +44,7 @@ async def init_database() -> None:
                 "image_quality_status": "VARCHAR(30)",
                 "image_quality_reason": "VARCHAR(80)",
                 "near_black_ratio": "FLOAT",
+                "phash_rotations_json": "TEXT",
             }
             for column, data_type in image_additions.items():
                 if column not in image_columns:
@@ -82,6 +83,7 @@ async def init_database() -> None:
             await connection.execute(text("ALTER TABLE images ADD COLUMN IF NOT EXISTS image_quality_status VARCHAR(30)"))
             await connection.execute(text("ALTER TABLE images ADD COLUMN IF NOT EXISTS image_quality_reason VARCHAR(80)"))
             await connection.execute(text("ALTER TABLE images ADD COLUMN IF NOT EXISTS near_black_ratio DOUBLE PRECISION"))
+            await connection.execute(text("ALTER TABLE images ADD COLUMN IF NOT EXISTS phash_rotations_json TEXT"))
             await connection.execute(text("ALTER TABLE export_report_images ADD COLUMN IF NOT EXISTS source_technician_id VARCHAR(10)"))
             await connection.execute(text("ALTER TABLE export_reports ADD COLUMN IF NOT EXISTS summary_xlsx_path TEXT"))
             await connection.execute(text("ALTER TABLE analysis_jobs ADD COLUMN IF NOT EXISTS started_at TIMESTAMP"))

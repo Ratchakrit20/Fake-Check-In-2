@@ -1,4 +1,5 @@
 import io
+import json
 from pathlib import Path
 from typing import cast
 from uuid import uuid4
@@ -72,12 +73,19 @@ async def create_batch(
             if not quality.can_compare:
                 unverifiable_count += 1
             captured_at = extract_capture_datetime(opened)
-            if not quality.can_compare:
-                phash = None
-            elif existing_exact is not None and existing_exact.phash:
-                phash = existing_exact.phash
-            else:
-                phash = phash_detector.calculate(opened).original
+            rotations = None
+            if quality.can_compare:
+                if existing_exact is not None and existing_exact.phash_rotations_json:
+                    try:
+                        saved_rotations = json.loads(existing_exact.phash_rotations_json)
+                        if all(str(angle) in saved_rotations for angle in phash_detector.ROTATION_ANGLES):
+                            rotations = {str(angle): str(saved_rotations[str(angle)]) for angle in phash_detector.ROTATION_ANGLES}
+                    except (TypeError, ValueError):
+                        rotations = None
+                if rotations is None:
+                    rotations = phash_detector.calculate_rotations(opened)
+            phash = rotations["0"] if rotations else None
+            phash_rotations_json = json.dumps(rotations, separators=(",", ":")) if quality.can_compare else None
         original_filename = Path(file.filename or "image").name
         source_reference = parse_source_reference(original_filename)
         record = ImageRecord(
@@ -95,6 +103,7 @@ async def create_batch(
             mime_type=metadata.mime_type,
             sha256=sha256,
             phash=phash,
+            phash_rotations_json=phash_rotations_json,
             analysis_status="QUEUED" if quality.can_compare else "UNVERIFIABLE",
             image_quality_status=quality.status,
             image_quality_reason=quality.reason,

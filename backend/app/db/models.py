@@ -35,6 +35,7 @@ class ImageRecord(Base):
     mime_type: Mapped[str] = mapped_column(String(100))
     sha256: Mapped[str] = mapped_column(String(64), index=True)
     phash: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    phash_rotations_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     analyzed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     analysis_status: Mapped[str] = mapped_column(String(30), default="QUEUED")

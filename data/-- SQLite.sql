@@ -62,27 +62,27 @@
 
 SELECT
     p.id AS pair_id,
-    -- a.original_filename AS image_a,
+    a.original_filename AS image_a,
     a.source_checkin_date AS image_a_date,
     a.source_job_number AS image_a_customer_id,
-    -- b.original_filename AS image_b,
+    b.original_filename AS image_b,
     b.source_checkin_date AS image_b_date,
     b.source_job_number AS image_b_customer_id,
     p.relationship_score,
     p.sift_matches,
     p.ransac_inliers,
     p.ransac_inlier_ratio,
+    p.created_at AS pair_created_at,
     p.details_json
 FROM pairwise_results AS p
 JOIN images AS a ON a.id = p.image_a_id
 JOIN images AS b ON b.id = p.image_b_id
 WHERE p.relationship_level = 'unrelated'
-  AND (
-      (a.analyzed_at >= '2026-10-27 17:00:00'
-       AND a.analyzed_at < '2026-10-28 17:00:00')
-      OR
-      (b.analyzed_at >= '2026-10-27 17:00:00'
-       AND b.analyzed_at < '2026-10-28 17:00:00')
+  AND p.created_at >= (
+      SELECT started_at
+      FROM analysis_jobs
+      ORDER BY created_at DESC
+      LIMIT 1
   )
 ORDER BY p.created_at DESC;
 
