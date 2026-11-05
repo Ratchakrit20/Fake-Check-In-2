@@ -1,7 +1,11 @@
 import hashlib
+import os
+import shutil
+import zipfile
 from collections import OrderedDict
 from concurrent.futures import Future
-from threading import Lock
+from pathlib import Path
+from threading import Lock, get_ident
 
 import cv2
 import numpy as np
@@ -19,6 +23,8 @@ class SIFTMatcher:
         edge_threshold: float = 15,
         sigma: float = 1.2,
         cache_size: int = 128,
+        cache_dir: Path | None = None,
+        disk_cache_max_bytes: int = 5 * 1024**3,
     ) -> None:
         self.ratio_threshold = ratio_threshold
         self.max_dimension = max_dimension
@@ -26,9 +32,17 @@ class SIFTMatcher:
         self.edge_threshold = edge_threshold
         self.sigma = sigma
         self.cache_size = cache_size
+        self.cache_dir = Path(cache_dir) if cache_dir is not None else None
+        self.disk_cache_max_bytes = max(0, int(disk_cache_max_bytes))
+        self._disk_writes_since_prune = 0
         self._cache: OrderedDict[str, tuple[list, np.ndarray | None, tuple[int, int]]] = OrderedDict()
         self._inflight: dict[str, Future] = {}
         self._cache_lock = Lock()
+        if self.cache_dir is not None:
+            try:
+                self.cache_dir.mkdir(parents=True, exist_ok=True)
+            except OSError:
+                self.cache_dir = None
 
     def _gray(self, image: Image.Image) -> np.ndarray:
         rgb = np.asarray(image.convert("RGB"))
@@ -47,10 +61,20 @@ class SIFTMatcher:
         digest.update(rgb.tobytes())
         return digest.hexdigest()
 
-    def _features(self, image: Image.Image, exclusion_mask: np.ndarray | None = None) -> tuple[list, np.ndarray | None, tuple[int, int]]:
-        key = self._cache_key(image)
+    def _features_cache_key(self, image: Image.Image, exclusion_mask: np.ndarray | None = None) -> str:
+        key_digest = hashlib.sha256()
+        key_digest.update(b"sift-features-v2:")
+        key_digest.update(self._cache_key(image).encode())
+        key_digest.update(
+            f"|{cv2.__version__}|{self.max_dimension}|{self.contrast_threshold:.12g}|{self.edge_threshold:.12g}|{self.sigma:.12g}".encode()
+        )
         if exclusion_mask is not None:
-            key = hashlib.sha256((key + hashlib.sha256(exclusion_mask.tobytes()).hexdigest()).encode()).hexdigest()
+            key_digest.update(f"|mask:{exclusion_mask.dtype}:{exclusion_mask.shape}".encode())
+            key_digest.update(hashlib.sha256(exclusion_mask.tobytes()).digest())
+        return key_digest.hexdigest()
+
+    def _features(self, image: Image.Image, exclusion_mask: np.ndarray | None = None) -> tuple[list, np.ndarray | None, tuple[int, int]]:
+        key = self._features_cache_key(image, exclusion_mask)
         with self._cache_lock:
             cached = self._cache.get(key)
             if cached is not None:
@@ -64,22 +88,25 @@ class SIFTMatcher:
         if not owner:
             return future.result()
         try:
-            gray = self._gray(image)
-            sift_mask = None
-            if exclusion_mask is not None:
-                sift_mask = cv2.resize(
-                    exclusion_mask.astype(np.uint8),
-                    (gray.shape[1], gray.shape[0]),
-                    interpolation=cv2.INTER_NEAREST,
+            result = self._read_disk_cache(key)
+            if result is None:
+                gray = self._gray(image)
+                sift_mask = None
+                if exclusion_mask is not None:
+                    sift_mask = cv2.resize(
+                        exclusion_mask.astype(np.uint8),
+                        (gray.shape[1], gray.shape[0]),
+                        interpolation=cv2.INTER_NEAREST,
+                    )
+                # A detector per uncached image keeps OpenCV work thread-safe.
+                detector = cv2.SIFT_create(
+                    contrastThreshold=self.contrast_threshold,
+                    edgeThreshold=self.edge_threshold,
+                    sigma=self.sigma,
                 )
-            # A detector per uncached image keeps OpenCV work thread-safe.
-            detector = cv2.SIFT_create(
-                contrastThreshold=self.contrast_threshold,
-                edgeThreshold=self.edge_threshold,
-                sigma=self.sigma,
-            )
-            keypoints, descriptors = detector.detectAndCompute(gray, sift_mask)
-            result = (keypoints, descriptors, (gray.shape[1], gray.shape[0]))
+                keypoints, descriptors = detector.detectAndCompute(gray, sift_mask)
+                result = (keypoints, descriptors, (gray.shape[1], gray.shape[0]))
+                self._write_disk_cache(key, result)
             with self._cache_lock:
                 self._cache[key] = result
                 self._cache.move_to_end(key)
@@ -93,6 +120,107 @@ class SIFTMatcher:
                 self._inflight.pop(key, None)
             future.set_exception(exc)
             raise
+
+    def _disk_cache_path(self, key: str) -> Path | None:
+        return self.cache_dir / f"{key}.npz" if self.cache_dir is not None else None
+
+    def _read_disk_cache(self, key: str) -> tuple[list, np.ndarray | None, tuple[int, int]] | None:
+        cache_path = self._disk_cache_path(key)
+        if cache_path is None or not cache_path.is_file():
+            return None
+        try:
+            with np.load(cache_path, allow_pickle=False) as saved:
+                data = saved["keypoints"]
+                descriptors = saved["descriptors"]
+                width, height = (int(value) for value in saved["image_size"])
+            keypoints = [
+                cv2.KeyPoint(
+                    float(row[0]), float(row[1]), float(row[2]), float(row[3]),
+                    float(row[4]), int(row[5]), int(row[6]),
+                )
+                for row in data
+            ]
+            if descriptors.size == 0:
+                descriptors = None
+            else:
+                descriptors = np.asarray(descriptors, dtype=np.float32)
+            try:
+                os.utime(cache_path, None)
+            except OSError:
+                pass
+            return keypoints, descriptors, (width, height)
+        except (OSError, ValueError, KeyError, EOFError, zipfile.BadZipFile, cv2.error):
+            try:
+                cache_path.unlink(missing_ok=True)
+            except OSError:
+                pass
+            return None
+
+    def _write_disk_cache(
+        self,
+        key: str,
+        result: tuple[list, np.ndarray | None, tuple[int, int]],
+    ) -> None:
+        cache_path = self._disk_cache_path(key)
+        if cache_path is None or self.disk_cache_max_bytes <= 0:
+            return
+        keypoints, descriptors, image_size = result
+        if descriptors is None:
+            descriptor_array = np.empty((0, 128), dtype=np.float32)
+        else:
+            descriptor_array = np.asarray(descriptors, dtype=np.float32)
+        keypoint_array = np.asarray(
+            [
+                [point.pt[0], point.pt[1], point.size, point.angle, point.response, point.octave, point.class_id]
+                for point in keypoints
+            ],
+            dtype=np.float64,
+        ).reshape((-1, 7))
+        temp_path = cache_path.with_name(f"{key}.{os.getpid()}.{get_ident()}.tmp")
+        try:
+            with temp_path.open("wb") as handle:
+                np.savez(
+                    handle,
+                    keypoints=keypoint_array,
+                    descriptors=descriptor_array,
+                    image_size=np.asarray(image_size, dtype=np.int32),
+                )
+            if temp_path.stat().st_size <= self.disk_cache_max_bytes:
+                try:
+                    os.replace(temp_path, cache_path)
+                except OSError:
+                    # Some Windows sandboxed volumes do not implement rename.
+                    # A partial cache is detected and ignored on the next read.
+                    shutil.copyfile(temp_path, cache_path)
+                self._disk_writes_since_prune += 1
+                if self._disk_writes_since_prune >= 32:
+                    self._prune_disk_cache()
+                    self._disk_writes_since_prune = 0
+        except (OSError, ValueError, TypeError):
+            # A full or read-only cache must never make image analysis fail.
+            pass
+        finally:
+            try:
+                temp_path.unlink(missing_ok=True)
+            except OSError:
+                pass
+
+    def _prune_disk_cache(self) -> None:
+        if self.cache_dir is None:
+            return
+        try:
+            entries = [(path.stat().st_mtime, path, path.stat().st_size) for path in self.cache_dir.glob("*.npz")]
+            total_bytes = sum(size for _, _, size in entries)
+            if total_bytes <= self.disk_cache_max_bytes:
+                return
+            for _, path, size in sorted(entries):
+                path.unlink(missing_ok=True)
+                total_bytes -= size
+                if total_bytes <= int(self.disk_cache_max_bytes * 0.9):
+                    break
+        except OSError:
+            # Cache eviction is best-effort; analysis remains independent of it.
+            return
 
     def match(
         self,

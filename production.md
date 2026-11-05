@@ -6,7 +6,7 @@
 
 หน้า React ทำหน้าที่รับไฟล์ แสดงสถานะ และแสดงผลเท่านั้น การวิเคราะห์ไม่ได้ทำใน browser
 
-ค่าเริ่มต้นใน `config/default.yaml` คือ `DATABASE__URL=sqlite+aiosqlite:///./data/app.db` และ `JOBS__WORKER_MODE=process`: API เปิด AI worker เป็น process แยกบนเครื่องเดียวกันและเขียน log แยกที่ `output/worker-<job_id>.log` ทั้งสอง process ใช้ SQLite ไฟล์เดียวกัน โหมด Production ใน `docker-compose.yml` ตั้ง `JOBS__WORKER_MODE=celery`: API ส่ง `analysis.process_batch` เข้า Redis และ Celery worker แยก service ทำงาน SSCD, FAISS, SIFT, RANSAC และโมเดลอวัยวะ โดย API อ่านสถานะจาก PostgreSQL ส่วน Redis เป็น queue ไม่ใช่ฐานข้อมูลผลวิเคราะห์ โหมด `inline` ยังมีไว้สำหรับทดสอบเท่านั้น
+ค่าเริ่มต้นใน `config/default.yaml` คือ `DATABASE__URL=sqlite+aiosqlite:///./data/app.db` และ `JOBS__WORKER_MODE=process`: API เปิด AI worker process ใหม่ต่อ Job และเขียน log แยกที่ `output/worker-<job_id>.log` ทั้งสอง process ใช้ SQLite ไฟล์เดียวกัน โมเดลจึงโหลดเมื่อ worker เริ่มงาน ไม่ได้โหลดค้างตั้งแต่เปิด API โหมด Production ใน `docker-compose.yml` ตั้ง `JOBS__WORKER_MODE=celery`: API ส่ง `analysis.process_batch` เข้า Redis และ Celery worker แยก service ทำงาน SSCD, FAISS, SIFT, RANSAC และโมเดลอวัยวะ โดย API อ่านสถานะจาก PostgreSQL ส่วน Redis เป็น queue ไม่ใช่ฐานข้อมูลผลวิเคราะห์ โหมด `inline` ยังมีไว้สำหรับทดสอบเท่านั้น
 
 โหมด local และ production แยกงาน AI ออกจาก process ของ API แล้ว โหมด local ใช้ process lock ต่อ job และ resume จาก checkpoint; โหมด Production ใช้ Celery late-ack กับ Redis
 
@@ -52,11 +52,12 @@ React ──poll job status──► FastAPI ──read──► PostgreSQL
 
 ### AI Worker
 
-- โหลด SSCD, FAISS และโมเดลอวัยวะครั้งเดียวต่อ worker
+- โหลด SSCD, FAISS และโมเดลอวัยวะครั้งเดียวต่อ worker process (local mode สร้าง process ต่อ Job; Celery worker ค้างอยู่และ reuse โมเดลข้าม task ได้)
 - ดึงภาพจาก Object Storage ด้วย `image_id`
 - ประมวลผลและบันทึกหลักฐานรายคู่
 - อัปเดต progress และ error ลง PostgreSQL
 - รับงานใหม่ผ่าน Redis/Celery เท่านั้น
+- SIFT features ใช้ cache ใน `data/cache/sift` จำกัดด้วย `sift.disk_cache_max_gb` (ค่าเริ่มต้น 5 GB); เป็นข้อมูลสร้างใหม่ได้ จึงไม่จำเป็นต้องสำรอง แต่ควรเผื่อพื้นที่ disk ให้พอสำหรับ warm-cache
 
 ### PostgreSQL
 
@@ -164,6 +165,14 @@ VECTOR_SEARCH__TOP_K=30
 - อัตรา upload/error/retry
 - PostgreSQL connection/latency และ Redis queue depth
 - จำนวนผล reused/review/not-reused และผลที่เจ้าหน้าที่แก้คำตัดสิน
+
+## เส้นทาง candidate และผลที่บันทึก
+
+ภาพที่ผ่าน image-quality gate ถูกค้นด้วย FAISS Top-K และ pHash BK-tree: Top-K รับเมื่อ SSCD ถึง threshold; pHash ต้องผ่านทั้ง Hamming distance และ SSCD threshold; SHA-256 ตรงทุกไบต์สร้างผล `exact_file` โดยไม่ทำ SIFT/RANSAC ภาพ `UNVERIFIABLE` ไม่เข้าดัชนีจับคู่
+
+ผลรายคู่บันทึกใน PostgreSQL/SQLite ตาราง `pairwise_results` โดย `relationship_level` เป็นประเภท (`exact_file`, `same_image`, `edited_or_cropped`, `background_replaced`, `same_scene_new_capture`, `repeated_checkin`, `similar_person`, `unrelated`, `unverifiable`) และ `relationship_score` เป็นคะแนน 0–1; `details_json` เก็บ `decision`, `reuse_verdict`, `reasons`, `evidence` และ visualization metadata กลุ่มภาพคำนวณจากผลคู่ที่เชื่อมถึงกันตามกติกากลุ่ม ไม่ได้ประกาศว่าทุกคู่ในกลุ่มมีผลบวกโดยตรง
+
+ลำดับที่แนะนำให้ตรวจรับระบบ: ยืนยัน candidate source/gate ใน worker log, ตรวจ `relationship_level` และ `details_json` ของคู่, แล้วตรวจ connected components ในหน้า Groups เพื่อแยกผลรายคู่ออกจากผลการจัดกลุ่ม
 
 ## สรุป
 

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import hashlib
 import urllib.request
+from collections import OrderedDict
+from concurrent.futures import Future
 from pathlib import Path
 from threading import Lock
 
@@ -38,6 +40,10 @@ class SSCDEmbeddingProvider(EmbeddingProvider):
         self._device = None
         self._transform = None
         self._load_lock = Lock()
+        self._embedding_cache_lock = Lock()
+        self._embedding_cache: OrderedDict[str, np.ndarray] = OrderedDict()
+        self._embedding_inflight: dict[str, Future] = {}
+        self._embedding_cache_size = 4096
 
     @property
     def dimension(self) -> int:
@@ -104,7 +110,15 @@ class SSCDEmbeddingProvider(EmbeddingProvider):
     def embed(self, image: Image.Image) -> np.ndarray:
         return self.embed_many([image])[0]
 
-    def embed_many(self, images: list[Image.Image]) -> np.ndarray:
+    @staticmethod
+    def _image_key(image: Image.Image) -> tuple[str, Image.Image]:
+        rgb = image.convert("RGB")
+        digest = hashlib.sha256()
+        digest.update(f"{rgb.width}x{rgb.height}:RGB:".encode())
+        digest.update(rgb.tobytes())
+        return digest.hexdigest(), rgb
+
+    def _infer_uncached(self, images: list[Image.Image]) -> np.ndarray:
         self._load()
         import torch
 
@@ -114,3 +128,48 @@ class SSCDEmbeddingProvider(EmbeddingProvider):
             if self.normalize:
                 vectors = torch.nn.functional.normalize(vectors, dim=1)
         return vectors.detach().cpu().numpy().astype(np.float32)
+
+    def embed_many(self, images: list[Image.Image]) -> np.ndarray:
+        if not images:
+            return np.empty((0, self.dimension), dtype=np.float32)
+
+        output: list[np.ndarray | None] = [None] * len(images)
+        pending: list[tuple[int, str, Image.Image, Future]] = []
+        inference_items: list[tuple[str, Image.Image, Future]] = []
+        for index, image in enumerate(images):
+            key, rgb = self._image_key(image)
+            with self._embedding_cache_lock:
+                cached = self._embedding_cache.get(key)
+                if cached is not None:
+                    self._embedding_cache.move_to_end(key)
+                    output[index] = cached.copy()
+                    continue
+                future = self._embedding_inflight.get(key)
+                if future is None:
+                    future = Future()
+                    self._embedding_inflight[key] = future
+                    inference_items.append((key, rgb, future))
+                pending.append((index, key, rgb, future))
+
+        if inference_items:
+            try:
+                vectors = self._infer_uncached([image for _, image, _ in inference_items])
+                for (key, _image, future), vector in zip(inference_items, vectors, strict=True):
+                    value = np.asarray(vector, dtype=np.float32).copy()
+                    with self._embedding_cache_lock:
+                        self._embedding_cache[key] = value
+                        self._embedding_cache.move_to_end(key)
+                        while len(self._embedding_cache) > self._embedding_cache_size:
+                            self._embedding_cache.popitem(last=False)
+                        self._embedding_inflight.pop(key, None)
+                    future.set_result(value.copy())
+            except Exception as exc:
+                with self._embedding_cache_lock:
+                    for key, _image, future in inference_items:
+                        self._embedding_inflight.pop(key, None)
+                        future.set_exception(exc)
+                raise
+
+        for index, _key, _image, future in pending:
+            output[index] = future.result().copy()
+        return np.stack([value for value in output if value is not None]).astype(np.float32, copy=False)

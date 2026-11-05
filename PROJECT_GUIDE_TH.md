@@ -18,22 +18,22 @@
 รับไฟล์และตรวจความปลอดภัย
         |
         v
-SHA-256 ตรวจไฟล์ตรงกันทุกไบต์ + เก็บ pHash มุมปกติ
+ตรวจคุณภาพภาพ + SHA-256 + เก็บ pHash 0/90/180/270 องศา
         |
         v
 SSCD สร้างลายนิ้วมือสำหรับตรวจสำเนาเป็น batch (GPU เมื่อใช้ได้)
         |
         v
 ค้น Candidate ขนานกัน
-├─ FAISS เลือก embedding ใกล้เคียง Top-K
-├─ pHash query 0/90/180/270 องศา ค้น BK-tree
-└─ SHA-256 เก็บไฟล์ซ้ำตรงตัว
+├─ FAISS เลือก embedding ใกล้เคียง Top-K ที่ SSCD ผ่านเกณฑ์
+├─ pHash ทุกมุมค้น BK-tree และต้องผ่าน SSCD ด้วย
+└─ SHA-256 ตรงทุกไบต์ -> exact_file โดยไม่ทำ SIFT/RANSAC
         |
         v
 รวม Candidate -> ตัดคู่ซ้ำ/ภาพเดียวกัน/source เดียวกัน
         |
         v
-SIFT จับรายละเอียดเฉพาะจุด + RANSAC ยืนยันตำแหน่ง (CPU หลาย worker)
+ใช้ SIFT features ที่ cache ได้ + matching/RANSAC แยกสำหรับแต่ละคู่ (CPU หลาย worker)
         |
         v
 โมเดล mask แยกอวัยวะ (GPU เมื่อใช้ได้)
@@ -55,7 +55,11 @@ SIFT จับรายละเอียดเฉพาะจุด + RANSAC �
 - ขนาด batch เลือกจาก VRAM: VRAM มากใช้ batch ใหญ่ขึ้น; CPU-only ใช้ batch เล็กลง
 - SIFT/RANSAC ใช้ thread pool หลาย worker และแบ่งจำนวน OpenCV threads เพื่อไม่ให้แต่ละ workerแย่ง CPU กัน
 - FAISS รุ่นในโครงการเป็น `faiss-cpu` จึงทำงานบน CPU
-- pHash BK-tree สร้างใน RAM หนึ่งต้นต่อหนึ่งงานจาก pHash มุมปกติของภาพทั้งหมด แล้วใช้ query สี่มุมค้น `image_id` ใกล้เคียง
+- pHash BK-tree สร้างใน RAM หนึ่งต้นต่อหนึ่งงานจาก pHash สี่มุมที่คำนวณไว้ตั้งแต่อัปโหลด; ภาพเก่าจะ backfill เมื่อเริ่มงาน
+- Candidate จาก Top-K ต้องผ่าน SSCD threshold; Candidate จาก pHash ต้องผ่านทั้งระยะ pHash และ SSCD threshold เดียวกัน (ค่าเริ่มต้น 0.50)
+- SIFT keypoints/descriptors cache ลง `data/cache/sift` ตาม hash ของภาพ, mask, config และ OpenCV version; cache มีเพดานขนาด 5 GB และลบรายการเก่าก่อนเมื่อเต็ม
+- SIFT matching และ RANSAC ยังคำนวณใหม่ต่อคู่ ส่วนไฟล์ cache มีไว้ใช้ features ประจำภาพซ้ำ
+- embedding cache ใน worker เก็บผลล่าสุดไม่เกิน 4,096 เวกเตอร์ เพื่อลดการเรียกโมเดลซ้ำใน Job เดียว
 - SQLite เขียนผลเป็นชุด ลดเวลาล็อกฐานข้อมูล
 - คู่ A-B และ B-A ถูก normalize และคำนวณเพียงครั้งเดียวต่อรอบ
 
@@ -86,7 +90,7 @@ fake ckeck in/
 │  │  └─ session.py               SQLAlchemy async; SQLite ใช้ WAL และรองรับ PostgreSQL ผ่าน URL
 │  ├─ detectors/
 │  │  ├─ sha256_detector.py       ตรวจไฟล์ที่เหมือนกันทุกไบต์
-│  │  ├─ perceptual_hash_detector.py สร้าง pHash สำหรับภาพปกติ กลับด้าน และช่วยเลือกมุมหมุน
+│  │  ├─ perceptual_hash_detector.py สร้าง pHash ภาพปกติและมุมหมุน
 │  │  ├─ sift_matcher.py          จับ keypoints และจับคู่รายละเอียดภาพ
 │  │  ├─ ransac_verifier.py       กรองคู่จุดผิดและยืนยันความสัมพันธ์เชิงเรขาคณิต
 │  │  ├─ flip_detector.py         สนับสนุนการตรวจภาพกลับด้าน
@@ -100,13 +104,16 @@ fake ckeck in/
 │  ├─ services/
 │  │  ├─ job_dispatch_service.py  เปิด local worker หรือส่งงานเข้า Celery ตามโหมด
 │  │  ├─ job_process_lock.py      ป้องกัน local worker หลายตัวรับ job เดียวกัน
-│  ├─ workers/                    local process worker และ Celery task
+│  │  ├─ batch_analysis_service.py สร้าง embedding, candidate, ตรวจคู่ขนาน และบันทึก checkpoint
 │  │  ├─ pair_analysis_service.py รวม detector เพื่อวิเคราะห์ภาพหนึ่งคู่
-│  │  ├─ relationship_scorer.py   รวมหลักฐานและกำหนดคำตัดสิน
-│  │  ├─ batch_analysis_service.py จัด embedding, candidate, parallel verification และบันทึกผล
+│  │  ├─ ai_model_service.py      ตรวจกรอบพิกัด/วันเวลาสำหรับ mask และรายงาน SOA
+│  │  ├─ relationship_scorer.py   รวมหลักฐานและกำหนดผลรายคู่
 │  │  ├─ relationship_graph_service.py รวมกลุ่มด้วย connected components
-│  │  ├─ source_filename.py       อ่านเลข 10 หลักหลัง home_/splitter_
+│  │  ├─ source_filename.py       อ่าน Technician/Customer ID และ metadata จากชื่อไฟล์
 │  │  └─ image_validation_service.py ตรวจชนิด ขนาด และความถูกต้องของไฟล์
+│  ├─ workers/
+│  │  ├─ local_worker.py          รันหนึ่ง Job ใน process แยก
+│  │  └─ tasks.py                 รับ Job จาก Celery ในโหมด Production
 │  ├─ storage/local_storage.py    จัดเก็บภาพลง data/images
 │  └─ domain/                     enum, schema และ interface กลาง
 ├─ frontend/src/
@@ -119,6 +126,7 @@ fake ckeck in/
 ├─ data/images/                   ไฟล์ภาพที่ระบบจัดเก็บ
 ├─ data/app.db                    ฐานข้อมูล SQLite สำหรับโหมดเครื่องเดียวโดยค่าเริ่มต้น
 ├─ data/faiss/                    FAISS index และรายการ image id
+├─ data/cache/sift/                keypoints/descriptors cache แบบมีเพดานพื้นที่ 5 GB
 ├─ data/models/                   SSCD และโมเดลแยกอวัยวะ
 ├─ tests/                         unit tests
 ├─ environment.yml               Conda environment แบบพกพา
@@ -225,6 +233,8 @@ Docker Compose กำหนด API + Celery worker + Redis + PostgreSQL แย�
 
 เข้าเมนู “วิเคราะห์หลายภาพ” เลือกหลายไฟล์หรือโฟลเดอร์ แล้วเริ่มวิเคราะห์ สามารถเลือกได้สูงสุด 5,000 รูปต่อครั้ง รูปละไม่เกิน 5 MB และรวมไม่เกิน 1,000 MB หน้าเว็บส่งทั้งหมดเป็น request เดียว ส่วน AI worker แยก process จะสร้าง embedding และตรวจคู่เป็นชุดภายใน สามารถเปลี่ยนหน้า/รีเฟรชได้ งานไม่เริ่มใหม่และหน้าเว็บจะเชื่อมกลับไปยังงานเดิม
 
+ผลรายคู่บันทึกใน `pairwise_results` ประกอบด้วยระดับและประเภทผล คะแนน เหตุผล และหลักฐานตัวเลขใน `details_json` เช่น SSCD similarity, pHash distance, SIFT match count และ RANSAC inliers/ratio; exact SHA ซ้ำได้ `exact_file` โดยข้ามการตรวจ SIFT/RANSAC ส่วนภาพ `UNVERIFIABLE` ถูกระบุแยกและไม่เข้าการจับคู่
+
 ### วิเคราะห์ข้อมูลเดิมใหม่
 
 ใช้หลังเปลี่ยนเกณฑ์ ระบบจะคำนวณคู่ที่เป็น candidate ใหม่และอัปเดตผลเดิม โดยไม่ลบไฟล์ภาพต้นฉบับ
@@ -243,6 +253,7 @@ Docker Compose กำหนด API + Celery worker + Redis + PostgreSQL แย�
 - `performance.cpu_workers: 0` เลือกตาม CPU; เครื่อง RAM น้อยให้ตั้ง 2–4
 - `performance.opencv_threads: 0` แบ่ง thread อัตโนมัติ
 - `performance.pair_chunk_size` จำนวนคู่ที่ส่งเข้า thread pool พร้อมกัน
+- `sift.cache_dir` และ `sift.disk_cache_max_gb` ที่เก็บ SIFT features และเพดานพื้นที่ cache (ค่าเริ่มต้น 5 GB)
 - `performance.candidate_min_similarity` ตัด candidate ที่ SSCD ต่ำมากก่อนใช้ SIFT
 - `vector_search.top_k` จำนวนเพื่อนบ้านต่อภาพ ค่าสูงลดโอกาสตกหล่นแต่ใช้เวลามากขึ้น
 - คู่ที่มีเลข 10 หลักหลัง `home_`/`splitter_` ตรงกันจะไม่ส่งเข้า SIFT เพราะชื่อระบุ source เดียวกันอยู่แล้ว

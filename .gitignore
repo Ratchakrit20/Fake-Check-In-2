@@ -13,6 +13,7 @@ __pycache__/
 node_modules/
 frontend/dist/
 data/images/
+data/cache/
 data/faiss/
 data/models/
 data/job-locks/

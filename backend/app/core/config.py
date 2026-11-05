@@ -70,6 +70,8 @@ class SiftConfig(BaseModel):
     sigma: float = Field(gt=0)
     ratio_threshold: float = Field(gt=0, lt=1)
     min_good_matches: int = Field(gt=0)
+    cache_dir: Path = Path("data/cache/sift")
+    disk_cache_max_gb: float = Field(default=5.0, gt=0)
 
 
 class RansacConfig(BaseModel):
@@ -253,6 +255,7 @@ def get_settings() -> Settings:
         (settings.storage, "root"),
         (settings.embedding, "cache_dir"),
         (settings.embedding, "model_path"),
+        (settings.sift, "cache_dir"),
         (settings.vector_search, "index_path"),
         (settings.vector_search, "metadata_path"),
         (settings.body_parts, "model_path"),

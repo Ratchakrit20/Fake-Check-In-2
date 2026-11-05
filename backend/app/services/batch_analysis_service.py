@@ -35,6 +35,20 @@ logger = logging.getLogger(__name__)
 _PHASH_ROTATION_ANGLES = (0, 90, 180, 270)
 
 
+def _analyze_candidate_path(
+    pair_service: PairAnalysisService,
+    first_content: bytes,
+    candidate_path: str,
+    embedding_similarity: float,
+):
+    """Read candidate bytes inside the pair worker so file I/O overlaps."""
+    return pair_service.analyze_bytes(
+        first_content,
+        Path(candidate_path).read_bytes(),
+        embedding_similarity,
+    )
+
+
 def _stored_phash_rotations(record: ImageRecord) -> dict[str, str]:
     try:
         values = json.loads(record.phash_rotations_json or "{}")
@@ -243,7 +257,14 @@ async def _backfill_phash_rotations(
         for record in pending[offset : offset + batch_size]:
             try:
                 with Image.open(record_paths[record.id]) as opened:
-                    assessment = ImageQualityService(settings.image_quality).assess(opened)
+                    if record.image_quality_status is not None:
+                        assessment = ImageQualityAssessment(
+                            record.image_quality_status,
+                            record.image_quality_reason,
+                            float(record.near_black_ratio or 0.0),
+                        )
+                    else:
+                        assessment = ImageQualityService(settings.image_quality).assess(opened)
                     rotations = detector.calculate_rotations(opened) if assessment.can_compare else None
             except (OSError, ValueError):
                 logger.exception("pHash rotation backfill could not decode %s", record.id)
@@ -721,9 +742,10 @@ async def process_batch_job(job_id: str, force: bool = False) -> None:
                         else:
                             futures.append(loop.run_in_executor(
                                 executor,
-                                pair_service.analyze_bytes,
+                                _analyze_candidate_path,
+                                pair_service,
                                 current_bytes,
-                                Path(candidate_path).read_bytes(),
+                                candidate_path,
                                 similarity,
                             ))
                     results = await asyncio.gather(*futures)
@@ -792,8 +814,12 @@ async def process_batch_job(job_id: str, force: bool = False) -> None:
                     item_row = await session.get(AnalysisJobItem, item.id)
                     if item_row:
                         item_row.status = JobStatus.COMPLETED.value
+                    job_row = await session.get(AnalysisJob, job_id)
+                    if job_row and job_row.status != JobStatus.CANCELLED.value:
+                        job_row.status = JobStatus.VERIFYING.value
+                        job_row.processed = len(completed_items) + offset
+                        job_row.error = None
                     await session.commit()
-                await _set_job(job_id, JobStatus.VERIFYING, len(completed_items) + offset)
         await _set_job(job_id, JobStatus.COMPLETED, len(items))
     except Exception as exc:  # noqa: BLE001 - job boundary must persist every failure
         if await _cancel_requested(job_id):

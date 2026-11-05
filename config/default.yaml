@@ -42,6 +42,8 @@ sift:
   sigma: 1.2
   ratio_threshold: 0.75
   min_good_matches: 12
+  cache_dir: data/cache/sift
+  disk_cache_max_gb: 5
 ransac:
   enabled: true
   reprojection_threshold: 5.0

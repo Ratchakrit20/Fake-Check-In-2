@@ -37,6 +37,8 @@ class PairAnalysisService:
             settings.sift.contrast_threshold,
             settings.sift.edge_threshold,
             settings.sift.sigma,
+            cache_dir=settings.sift.cache_dir,
+            disk_cache_max_bytes=int(settings.sift.disk_cache_max_gb * 1024**3),
         )
         self.ransac = RANSACVerifier(settings.ransac.reprojection_threshold)
         self.flip = FlipDetector(self.sift, self.ransac)
