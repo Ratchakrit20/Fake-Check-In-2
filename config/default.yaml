@@ -9,6 +9,10 @@ app:
   allowed_mime_types: [image/jpeg, image/png, image/webp, image/tiff, image/bmp]
 storage:
   root: data/images
+lmr_import:
+  enabled: true
+  root: E:/ratchakt/All-image-LMR
+  max_images_per_job: 100000
 database:
   url: sqlite+aiosqlite:///./data/app.db
 embedding:

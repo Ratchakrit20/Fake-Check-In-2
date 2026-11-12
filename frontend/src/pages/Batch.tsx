@@ -14,9 +14,12 @@ import {
   createBatch,
   cancelJob,
   getActiveJob,
+  getLmrImportDates,
   getGroups,
   getJob,
   getJobProgress,
+  importLmrDate,
+  LmrImportDate,
   reanalyzeLibrary,
   resumeJob,
 } from "../api/client";
@@ -33,6 +36,12 @@ const stageNames: Record<string, string> = {
   FAILED: "วิเคราะห์ไม่สำเร็จ",
 };
 
+const lmrRootCategory = "__date_root__";
+
+function lmrCategoryLabel(category: string): string {
+  return category === lmrRootCategory ? "ไฟล์ในโฟลเดอร์วันที่โดยตรง" : category;
+}
+
 export function Batch() {
   const [files, setFiles] = useState<File[]>([]),
     [job, setJob] = useState<BatchJob | null>(null);
@@ -42,6 +51,11 @@ export function Batch() {
   const [error, setError] = useState(""),
     [uploading, setUploading] = useState(false);
   const [qualityNotice, setQualityNotice] = useState("");
+  const [lmrDates, setLmrDates] = useState<LmrImportDate[]>([]);
+  const [lmrAvailable, setLmrAvailable] = useState<boolean | null>(null);
+  const [selectedLmrDate, setSelectedLmrDate] = useState("");
+  const [selectedLmrCategories, setSelectedLmrCategories] = useState<string[] | null>(null);
+  const [lmrError, setLmrError] = useState("");
   const fileInput = useRef<HTMLInputElement>(null),
     folderInput = useRef<HTMLInputElement>(null);
 
@@ -93,6 +107,18 @@ export function Batch() {
       });
   }, []);
   useEffect(() => {
+    getLmrImportDates()
+      .then((result) => {
+        setLmrAvailable(result.available);
+        setLmrDates(result.dates);
+        setSelectedLmrDate((current) => current || result.dates[0]?.date || "");
+      })
+      .catch((reason) => {
+        setLmrAvailable(false);
+        setLmrError(reason instanceof Error ? reason.message : "โหลดคลัง LMR ไม่สำเร็จ");
+      });
+  }, []);
+  useEffect(() => {
     if (!job || ["COMPLETED", "CANCELLED", "INTERRUPTED", "FAILED"].includes(job.status)) return;
     const jobId = job.id;
     let cancelled = false;
@@ -102,7 +128,12 @@ export function Batch() {
         const next = await getJob(jobId);
         if (cancelled) return;
         replaceJob(next);
-        if (next.status === "COMPLETED") setGroups((await getGroups()).groups);
+        if (["COMPLETED", "CANCELLED", "INTERRUPTED", "FAILED"].includes(next.status)) {
+          if (next.status === "COMPLETED") setGroups((await getGroups()).groups);
+          const lmrStatus = await getLmrImportDates();
+          setLmrAvailable(lmrStatus.available);
+          setLmrDates(lmrStatus.dates);
+        }
       } catch (reason) {
         if (!cancelled) {
           setError(reason instanceof Error ? reason.message : "โหลดสถานะไม่สำเร็จ");
@@ -156,6 +187,40 @@ export function Batch() {
       });
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "อัปโหลดไม่สำเร็จ");
+    } finally {
+      setUploading(false);
+    }
+  }
+  async function importLmr() {
+    if (!selectedLmrDate) return;
+    setUploading(true);
+    setError("");
+    setLmrError("");
+    setQualityNotice("");
+    setGroups([]);
+    try {
+      const result = await importLmrDate(selectedLmrDate, selectedLmrCategories ?? []);
+      if (!result.job_id) {
+        replaceJob(null);
+        setQualityNotice(
+          `พบ ${result.found_count.toLocaleString()} ภาพ · วิเคราะห์แล้ว ${result.already_analyzed_count.toLocaleString()} ภาพ · ไม่มีภาพที่ต้องส่งวิเคราะห์ใหม่${result.invalid_count ? ` · ข้ามไฟล์ที่เปลี่ยนหรือลบระหว่างสแกน ${result.invalid_count.toLocaleString()} ไฟล์` : ""}`,
+        );
+        const refreshed = await getLmrImportDates();
+        setLmrDates(refreshed.dates);
+        return;
+      }
+      setQualityNotice(
+        `เพิ่มภาพใหม่ ${result.imported_count.toLocaleString()} ภาพ${result.pending_retry_count ? ` · ส่งภาพที่ค้างวิเคราะห์เดิม ${result.pending_retry_count.toLocaleString()} ภาพเข้าคิวอีกครั้ง` : ""} · ภาพที่วิเคราะห์เสร็จแล้วและข้าม ${result.already_analyzed_count.toLocaleString()} ภาพ · รวมส่งวิเคราะห์ ${result.scheduled_count.toLocaleString()} ภาพ โดยไม่คัดลอกไฟล์`,
+      );
+      replaceJob({
+        id: result.job_id,
+        status: result.status,
+        total: result.scheduled_count,
+        processed: 0,
+        error: null,
+      });
+    } catch (reason) {
+      setLmrError(reason instanceof Error ? reason.message : "นำเข้าคลัง LMR ไม่สำเร็จ");
     } finally {
       setUploading(false);
     }
@@ -214,6 +279,24 @@ export function Batch() {
       )
     : 0;
   const isRunning = !!job && !["COMPLETED", "CANCELLED", "INTERRUPTED", "FAILED"].includes(job.status);
+  const selectedLmrEntry = lmrDates.find((item) => item.date === selectedLmrDate);
+  const availableLmrCategories = selectedLmrDate === "all"
+    ? [...new Set(lmrDates.flatMap((item) => item.categories))].sort((a, b) => {
+        if (a === lmrRootCategory) return -1;
+        if (b === lmrRootCategory) return 1;
+        return a.localeCompare(b, "th");
+      })
+    : selectedLmrEntry?.categories ?? [];
+  const allLmrCategoriesSelected = selectedLmrCategories === null;
+  const lmrTotals = lmrDates.reduce(
+    (totals, item) => ({
+      images: totals.images + item.image_count,
+      analyzed: totals.analyzed + item.analyzed_count,
+      pending: totals.pending + item.pending_count,
+      notImported: totals.notImported + item.not_imported_count,
+    }),
+    { images: 0, analyzed: 0, pending: 0, notImported: 0 },
+  );
   return (
     <section>
       <header className="page-head">
@@ -261,6 +344,109 @@ export function Batch() {
           onChange={(event) => choose(event.target.files)}
         />
         <p className="upload-limits">รองรับ JPG, PNG, WebP, TIFF และ BMP · สูงสุด 5,000 ไฟล์ · ไม่เกิน 5 MB ต่อไฟล์ · รวมไม่เกิน 1,000 MB</p>
+      </div>
+      <div className="lmr-import panel">
+        <div className="lmr-import-heading">
+          <p className="eyebrow">คลังภาพบนเครื่องเซิร์ฟเวอร์</p>
+          <h2>นำเข้าจากคลัง LMR โดยไม่คัดลอกไฟล์</h2>
+          <p>เลือกวันและหมวดหมู่ที่ต้องการ ระบบจะอ่านไฟล์เดิมจากคลังและบันทึกสถานะการวิเคราะห์ไว้ในฐานข้อมูล</p>
+          {lmrAvailable === false && (
+            <p className="lmr-unavailable">{lmrError || "backend ยังเข้าไม่ถึงคลัง LMR ตรวจค่า lmr_import.root ใน config/default.yaml"}</p>
+          )}
+        </div>
+        <div className="lmr-import-form">
+          <label className="lmr-field">
+            <span>1. เลือกวันที่</span>
+            <select
+              aria-label="เลือกวันที่จากคลัง LMR"
+              value={selectedLmrDate}
+              onChange={(event) => {
+                setSelectedLmrDate(event.target.value);
+                setSelectedLmrCategories(null);
+              }}
+              disabled={!lmrAvailable || uploading || isRunning || lmrDates.length === 0}
+            >
+              <option value="">
+                {lmrAvailable === null
+                  ? "กำลังโหลดวันที่..."
+                  : !lmrAvailable
+                    ? "คลัง LMR ยังไม่พร้อม"
+                    : lmrDates.length === 0
+                      ? "ไม่พบโฟลเดอร์วันที่"
+                      : "เลือกวันที่ที่ต้องการ"}
+              </option>
+              <option value="all">
+                ทุกวัน · วิเคราะห์แล้ว {lmrTotals.analyzed.toLocaleString()}/{lmrTotals.images.toLocaleString()} ภาพ · ค้าง {lmrTotals.pending.toLocaleString()} · ยังไม่นำเข้า {lmrTotals.notImported.toLocaleString()}
+              </option>
+              {lmrDates.map((item) => (
+                <option key={item.date} value={item.date}>
+                  {item.date} · วิเคราะห์แล้ว {item.analyzed_count.toLocaleString()}/{item.image_count.toLocaleString()} · ค้าง {item.pending_count.toLocaleString()} · ยังไม่นำเข้า {item.not_imported_count.toLocaleString()}
+                </option>
+              ))}
+            </select>
+            <small>เลือกวันเดียว หรือเลือกทุกวันในคลัง</small>
+          </label>
+          <fieldset className="lmr-category-picker" disabled={!selectedLmrDate || uploading || isRunning}>
+            <legend>2. เลือกหมวดหมู่</legend>
+            {!selectedLmrDate ? (
+              <p className="lmr-category-empty">เลือกวันที่ก่อน เพื่อดูหมวดหมู่ที่มีภาพ</p>
+            ) : availableLmrCategories.length === 0 ? (
+              <p className="lmr-category-empty">ไม่พบหมวดหมู่ที่มีภาพในวันที่เลือก</p>
+            ) : (
+              <div className="lmr-category-options">
+                <label className="lmr-category-option lmr-category-all">
+                  <input
+                    type="checkbox"
+                    checked={allLmrCategoriesSelected}
+                    onChange={() => setSelectedLmrCategories(null)}
+                  />
+                  <span>ทุกหมวด</span>
+                </label>
+                {availableLmrCategories.map((category) => {
+                  const checked = allLmrCategoriesSelected || (selectedLmrCategories ?? []).includes(category);
+                  return (
+                    <label className="lmr-category-option" key={category}>
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={() => {
+                          const next = allLmrCategoriesSelected
+                            ? availableLmrCategories.filter((item) => item !== category)
+                            : (selectedLmrCategories ?? []).includes(category)
+                              ? (selectedLmrCategories ?? []).filter((item) => item !== category)
+                              : [...(selectedLmrCategories ?? []), category];
+                          setSelectedLmrCategories(
+                            next.length === availableLmrCategories.length && next.length > 0 ? null : next,
+                          );
+                        }}
+                      />
+                      <span>{lmrCategoryLabel(category)}</span>
+                    </label>
+                  );
+                })}
+              </div>
+            )}
+            <small>
+              {selectedLmrDate === "all"
+                ? `มี ${availableLmrCategories.length} หมวดจากทุกวัน`
+                : selectedLmrEntry
+                  ? `มี ${availableLmrCategories.length} หมวด · ${selectedLmrEntry.image_count.toLocaleString()} ภาพ`
+                  : "เลือกได้มากกว่าหนึ่งหมวด"}
+            </small>
+          </fieldset>
+          <div className="lmr-import-action">
+            <p>ระบบจะข้ามภาพที่วิเคราะห์เสร็จแล้ว และทำต่อเฉพาะภาพใหม่หรือภาพที่ยังค้าง</p>
+            <button
+              className="primary"
+              disabled={!selectedLmrDate || availableLmrCategories.length === 0 || selectedLmrCategories?.length === 0 || uploading || isRunning}
+              onClick={importLmr}
+            >
+              {uploading ? <LoaderCircle className="spin" size={18} /> : <FolderOpen size={18} />}
+              เริ่มนำเข้าตามที่เลือก
+            </button>
+          </div>
+        </div>
+        {lmrError && lmrAvailable !== false && <p className="lmr-error">{lmrError}</p>}
       </div>
       <div className="batch-run-actions">
         <button

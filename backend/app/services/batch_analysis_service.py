@@ -15,18 +15,22 @@ from PIL import Image, ImageOps
 from sqlalchemy import select, update
 
 from ..core.config import get_settings
+from ..core.exceptions import InvalidImageError
 from ..core.runtime import detect_hardware
 from ..db.models import AnalysisJob, AnalysisJobItem, ImageEmbedding, ImageRecord, PairwiseResult
 from ..db.session import SessionFactory
 from ..detectors.perceptual_hash_detector import PerceptualHashDetector
+from ..detectors.sha256_detector import SHA256Detector
 from ..domain.enums import JobStatus
 from ..embeddings.sscd import SSCDEmbeddingProvider
-from ..storage.local_storage import LocalImageStorage
+from ..storage.local_storage import configured_image_storage
 from ..vector_store.faiss_store import FaissVectorStore
 from ..vector_store.phash_index import PerceptualHashIndex
 from .ai_image_metadata import serialize_ai_metadata
+from .image_metadata_service import extract_capture_datetime
 from .image_quality_service import UNVERIFIABLE, ImageQualityAssessment, ImageQualityService
 from .image_source_service import resolve_image_source
+from .image_validation_service import ImageValidationService
 from .job_process_lock import job_process_lock
 from .pair_analysis_service import PairAnalysisService
 
@@ -164,6 +168,100 @@ async def _cancel_requested(job_id: str) -> bool:
     async with SessionFactory() as session:
         job = await session.get(AnalysisJob, job_id)
         return job is None or job.status == JobStatus.CANCELLED.value
+
+
+async def _prepare_lmr_image_metadata(
+    job_id: str,
+    all_records: dict[str, ImageRecord],
+    record_paths: dict[str, Path],
+    settings,
+) -> None:
+    """Validate and fingerprint imported source files inside the durable worker job."""
+    pending = [
+        record for record in all_records.values()
+        if record.source_archive_date is not None and not record.sha256 and record.image_quality_status is None
+    ]
+    if not pending:
+        return
+
+    validator = ImageValidationService(settings.app)
+    quality_service = ImageQualityService(settings.image_quality)
+    phash_detector = PerceptualHashDetector(settings.phash.hash_size, settings.flip_detection.horizontal)
+    chunk_size = 100
+    for offset in range(0, len(pending), chunk_size):
+        if await _cancel_requested(job_id):
+            raise RuntimeError("analysis job cancelled during LMR image preparation")
+
+        updates: list[tuple[ImageRecord, dict[str, object]]] = []
+        for record in pending[offset : offset + chunk_size]:
+            path = record_paths.get(record.id)
+            values: dict[str, object]
+            if path is None:
+                assessment = ImageQualityAssessment(UNVERIFIABLE, "source_file_missing", 1.0)
+                values = {
+                    "image_quality_status": assessment.status,
+                    "image_quality_reason": assessment.reason,
+                    "near_black_ratio": assessment.near_black_ratio,
+                    "analysis_status": UNVERIFIABLE,
+                    "phash": None,
+                    "phash_rotations_json": None,
+                }
+            else:
+                try:
+                    content = path.read_bytes()
+                    validated = validator.validate(content)
+                    with Image.open(io.BytesIO(content)) as opened:
+                        assessment = quality_service.assess(opened)
+                        captured_at = extract_capture_datetime(opened)
+                        rotations = phash_detector.calculate_rotations(opened) if assessment.can_compare else None
+                    values = {
+                        "file_size": len(content),
+                        "width": validated.width,
+                        "height": validated.height,
+                        "mime_type": validated.mime_type,
+                        "sha256": SHA256Detector.from_bytes(content),
+                        "source_captured_at": captured_at,
+                        "image_quality_status": assessment.status,
+                        "image_quality_reason": assessment.reason,
+                        "near_black_ratio": assessment.near_black_ratio,
+                        "analysis_status": "QUEUED" if assessment.can_compare else UNVERIFIABLE,
+                        "phash": rotations["0"] if rotations else None,
+                        "phash_rotations_json": json.dumps(rotations, separators=(",", ":")) if rotations else None,
+                    }
+                except InvalidImageError:
+                    assessment = ImageQualityAssessment(UNVERIFIABLE, "image_validation_failed", 1.0)
+                    values = {
+                        "image_quality_status": assessment.status,
+                        "image_quality_reason": assessment.reason,
+                        "near_black_ratio": assessment.near_black_ratio,
+                        "analysis_status": UNVERIFIABLE,
+                        "phash": None,
+                        "phash_rotations_json": None,
+                    }
+                except (OSError, ValueError):
+                    logger.exception("LMR image could not be prepared: %s", record.storage_path)
+                    assessment = ImageQualityAssessment(UNVERIFIABLE, "image_decode_failed", 1.0)
+                    values = {
+                        "image_quality_status": assessment.status,
+                        "image_quality_reason": assessment.reason,
+                        "near_black_ratio": assessment.near_black_ratio,
+                        "analysis_status": UNVERIFIABLE,
+                        "phash": None,
+                        "phash_rotations_json": None,
+                    }
+            for field, value in values.items():
+                setattr(record, field, value)
+            updates.append((record, values))
+
+        async with SessionFactory() as session:
+            for record, values in updates:
+                await session.execute(update(ImageRecord).where(ImageRecord.id == record.id).values(**values))
+            await session.commit()
+        logger.info(
+            "LMR image preparation: processed %d/%d files",
+            min(offset + chunk_size, len(pending)),
+            len(pending),
+        )
 
 
 async def _preflight_image_quality(
@@ -324,7 +422,7 @@ async def process_batch_job(job_id: str, force: bool = False) -> None:
 
     cv2.setNumThreads(profile.opencv_threads)
     provider, vector_store, pair_service = _components()
-    storage = LocalImageStorage(settings.storage.root)
+    storage = configured_image_storage(settings)
     try:
         if await _cancel_requested(job_id):
             return
@@ -343,6 +441,7 @@ async def process_batch_job(job_id: str, force: bool = False) -> None:
                 for image_id, record in all_records.items()
                 if (resolved := storage.resolve(image_id, record.storage_path)) is not None
             }
+        await _prepare_lmr_image_metadata(job_id, all_records, record_paths, settings)
         # Older library images have no quality status yet. Check them once
         # before building either candidate index; the result is persisted.
         unverifiable_ids = await _preflight_image_quality(job_id, all_records, record_paths, settings)

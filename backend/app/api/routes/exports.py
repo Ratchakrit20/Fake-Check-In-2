@@ -23,7 +23,7 @@ from ...services.image_source_service import resolve_image_source
 from ...services.relationship_group_service import build_reportable_groups, build_reportable_groups_as_of, merge_report_groups_by_customer
 from ...services.relationship_policy import REPORTABLE_CLASSIFICATIONS
 from ...services.summary_export_service import create_summary_workbook
-from ...storage.local_storage import LocalImageStorage
+from ...storage.local_storage import configured_image_storage
 
 router = APIRouter(prefix="/exports", tags=["exports"])
 
@@ -152,7 +152,7 @@ async def create_export_pdf(request: CreateExportRequest, session: AsyncSession 
     report_id = str(uuid4())
     pdf_path = export_dir / f"export-{report_id}.pdf"
     summary_path = export_dir / f"summary-{report_id}.xlsx"
-    storage = LocalImageStorage(settings.storage.root)
+    storage = configured_image_storage(settings)
 
     classification_labels = {
         "exact_file": "ไฟล์ภาพเดียวกัน",

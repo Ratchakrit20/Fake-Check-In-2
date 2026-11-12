@@ -29,6 +29,12 @@ class StorageConfig(BaseModel):
     root: Path
 
 
+class LmrImportConfig(BaseModel):
+    enabled: bool = True
+    root: Path
+    max_images_per_job: int = Field(default=100_000, gt=0)
+
+
 class DatabaseConfig(BaseModel):
     url: str
 
@@ -201,6 +207,7 @@ class LoggingConfig(BaseModel):
 class Settings(BaseModel):
     app: AppConfig
     storage: StorageConfig
+    lmr_import: LmrImportConfig
     database: DatabaseConfig
     embedding: EmbeddingConfig
     vector_search: VectorSearchConfig
@@ -253,6 +260,7 @@ def get_settings() -> Settings:
     settings = Settings.model_validate(_apply_environment(data))
     path_fields = (
         (settings.storage, "root"),
+        (settings.lmr_import, "root"),
         (settings.embedding, "cache_dir"),
         (settings.embedding, "model_path"),
         (settings.sift, "cache_dir"),

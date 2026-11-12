@@ -11,13 +11,26 @@ import { getGroups, ImageGroup, RelationshipSubgroup } from "../api/client";
 import { formatDisplayDate } from "../utils/date";
 
 const classificationNames: Record<string, string> = {
-  exact_file: "ไฟล์เดียวกัน 100%",
-  same_image: "ภาพเดียวกันแต่ไฟล์ต่างกัน",
+  exact_file: "ไฟล์ภาพเดียวกันทุกไบต์",
+  same_image: "ภาพเดียวกัน แต่ไฟล์ต่างกัน",
   edited_or_cropped: "ภาพเดิมถูกดัดแปลง",
-  background_replaced: "สงสัยเปลี่ยนฉาก",
-  same_scene_new_capture: "พบฉากหลังสอดคล้องกัน",
-  repeated_checkin: "พบคนและฉากเชื่อมโยงกัน",
+  background_replaced: "พบบุคคลเดิม แต่ฉากหลังต่างกัน",
+  same_scene_new_capture: "พบรายละเอียดฉากหลังตรงกัน",
+  repeated_checkin: "พบจุดตรงกันทั้งบุคคลและฉากหลัง",
+  similar_person: "พบบุคคลคล้ายกัน",
+  unrelated: "ไม่พบความสัมพันธ์",
 };
+
+const classificationOptions = [
+  { key: "exact_file", title: "ไฟล์ภาพเดียวกันทุกไบต์", description: "ข้อมูลไฟล์ตรงกันด้วย SHA-256", result: "เข้าข่ายใช้ภาพเดิม" },
+  { key: "same_image", title: "ภาพเดียวกัน แต่ไฟล์ต่างกัน", description: "ภาพเดียวกันที่บันทึกหรือบีบอัดใหม่", result: "เข้าข่ายใช้ภาพเดิม" },
+  { key: "edited_or_cropped", title: "ภาพเดิมถูกดัดแปลง", description: "ครอป หมุน กลับด้าน เบลอ หรือแก้ไขภาพ", result: "เข้าข่ายใช้ภาพเดิม" },
+  { key: "background_replaced", title: "พบบุคคลเดิม แต่ฉากหลังต่างกัน", description: "อาจนำบุคคลหรือวัตถุเดิมไปเปลี่ยนฉาก", result: "ควรตรวจสอบต่อ" },
+  { key: "same_scene_new_capture", title: "พบรายละเอียดฉากหลังตรงกัน", description: "อาจเป็นสถานที่เดิม ลายคล้ายกัน หรือถ่ายคนละเวลา", result: "ควรตรวจสอบต่อ" },
+  { key: "repeated_checkin", title: "พบจุดตรงกันทั้งบุคคลและฉากหลัง", description: "พบหลักฐานในทั้งสองบริเวณ แต่ยังไม่ยืนยันสถานที่", result: "ควรตรวจสอบต่อ" },
+  { key: "similar_person", title: "พบบุคคลคล้ายกัน", description: "ยังยืนยันไม่ได้ว่าเป็นการใช้ภาพเดิม", result: "ยังไม่เข้าข่ายใช้ภาพเดิม" },
+  { key: "unrelated", title: "ไม่พบความสัมพันธ์", description: "หลักฐานไม่ถึงเกณฑ์ว่าภาพเกี่ยวข้องกัน", result: "ยังไม่เข้าข่ายใช้ภาพเดิม" },
+];
 
 function ImageSourceMeta({ jobNumber, checkinDate }: { jobNumber: string | null; checkinDate: string | null }) {
   const date = formatDisplayDate(checkinDate);
@@ -30,12 +43,25 @@ function ImageSourceMeta({ jobNumber, checkinDate }: { jobNumber: string | null;
   );
 }
 
-function GroupContent({ group }: { group: ImageGroup }) {
+function GroupContent({ group, classifications }: { group: ImageGroup; classifications: string[] | null }) {
   const navigate = useNavigate();
+  const subgroups = group.subgroups
+    .map((item) => ({
+      ...item,
+      relationships: item.relationships.filter(
+        (relation) => classifications === null || classifications.includes(relation.classification),
+      ),
+    }))
+    .filter((item) => item.relationships.length > 0);
+  const usedImageIds = new Set(subgroups.flatMap((item) => item.relationships.flatMap((relation) => [relation.image_a_id, relation.image_b_id])));
   const images = Array.from(
-    new Map(group.subgroups.flatMap((item) => item.images).map((image) => [image.id, image])).values(),
+    new Map(
+      subgroups.flatMap((item) => item.images)
+        .filter((image) => usedImageIds.has(image.id))
+        .map((image) => [image.id, image]),
+    ).values(),
   );
-  const relationships = group.subgroups.flatMap((item: RelationshipSubgroup) => item.relationships);
+  const relationships = subgroups.flatMap((item: RelationshipSubgroup) => item.relationships);
   return (
     <section className="relationship-subgroup">
       <div className="group-gallery">
@@ -108,8 +134,24 @@ export function Groups() {
     [selected, setSelected] = useState<ImageGroup | null>(null);
   const [loading, setLoading] = useState(true),
     [error, setError] = useState("");
+  const [selectedClassifications, setSelectedClassifications] = useState<string[] | null>(null);
   const detailRef = useRef<HTMLDivElement>(null);
   const [detailHeight, setDetailHeight] = useState(0);
+  const visibleGroups = groups.filter((group) =>
+    group.subgroups.some((subgroup) => subgroup.relationships.some(
+      (relation) => selectedClassifications === null || selectedClassifications.includes(relation.classification),
+    )),
+  );
+  const displayedSelected = visibleGroups.find((group) => group.id === selected?.id) ?? visibleGroups[0] ?? null;
+  const visiblePairCount = visibleGroups.reduce(
+    (total, group) => total + group.subgroups.reduce(
+      (count, subgroup) => count + subgroup.relationships.filter(
+        (relation) => selectedClassifications === null || selectedClassifications.includes(relation.classification),
+      ).length,
+      0,
+    ),
+    0,
+  );
   async function load() {
     setLoading(true);
     setError("");
@@ -162,7 +204,7 @@ export function Groups() {
     const observer = new ResizeObserver(updateHeight);
     observer.observe(detail);
     return () => observer.disconnect();
-  }, [selected]);
+  }, [displayedSelected]);
   return (
     <section>
       <header className="page-head">
@@ -188,7 +230,63 @@ export function Groups() {
           <p>เมื่อวิเคราะห์แบบ Batch เสร็จ กลุ่มที่ตรวจพบจะแสดงที่หน้านี้</p>
         </div>
       ) : (
-        <div className="groups-layout">
+        <>
+        <section className="group-classification-filter panel" aria-labelledby="group-filter-title">
+          <div className="group-filter-heading">
+            <div>
+              <p className="eyebrow">ตัวกรองผลตรวจ</p>
+              <h2 id="group-filter-title">เลือกประเภทความสัมพันธ์</h2>
+              <p>เลือกประเภทที่ต้องการดู ระบบจะแสดงเฉพาะคู่ภาพประเภทนั้นในแต่ละกลุ่ม</p>
+            </div>
+            <div className="group-filter-summary" aria-live="polite">
+              <strong>{visibleGroups.length.toLocaleString()}</strong> กลุ่ม
+              <span>{visiblePairCount.toLocaleString()} คู่ภาพ</span>
+            </div>
+          </div>
+          <div className="group-classification-options">
+            <label className="group-classification-option group-classification-all">
+              <input
+                type="checkbox"
+                checked={selectedClassifications === null}
+                onChange={() => setSelectedClassifications(null)}
+              />
+              <span><strong>ทุกประเภท</strong><small>แสดงผลตรวจทุกประเภท</small></span>
+            </label>
+            {classificationOptions.map((option) => {
+              const checked = selectedClassifications === null || selectedClassifications.includes(option.key);
+              return (
+                <label className="group-classification-option" key={option.key}>
+                  <input
+                    type="checkbox"
+                    checked={checked}
+                    onChange={() => {
+                      const next = selectedClassifications === null
+                        ? classificationOptions.filter((item) => item.key !== option.key).map((item) => item.key)
+                        : selectedClassifications.includes(option.key)
+                          ? selectedClassifications.filter((item) => item !== option.key)
+                          : [...selectedClassifications, option.key];
+                      setSelectedClassifications(
+                        next.length === classificationOptions.length ? null : next,
+                      );
+                    }}
+                  />
+                  <span>
+                    <strong>{option.title}</strong>
+                    <small>{option.description}</small>
+                    <em>{option.result}</em>
+                  </span>
+                </label>
+              );
+            })}
+          </div>
+        </section>
+        {visibleGroups.length === 0 ? (
+          <div className="group-empty panel">
+            <Images size={42} />
+            <h2>ไม่พบคู่ภาพตามประเภทที่เลือก</h2>
+            <p>ลองเลือกประเภทอื่น หรือกด “ทุกประเภท” เพื่อดูผลทั้งหมด</p>
+          </div>
+        ) : <div className="groups-layout">
           <aside
             className="group-list panel"
             style={
@@ -197,9 +295,9 @@ export function Groups() {
               } as CSSProperties
             }
           >
-            {groups.map((group) => (
+            {visibleGroups.map((group) => (
               <button
-                className={selected?.id === group.id ? "active" : ""}
+                className={displayedSelected?.id === group.id ? "active" : ""}
                 key={group.id}
                 onClick={() => {
                   setSelected(group);
@@ -214,28 +312,34 @@ export function Groups() {
               </button>
             ))}
           </aside>
-          {selected && (
+          {displayedSelected && (
             <div className="group-detail" ref={detailRef}>
               <div className="group-title">
                 <div>
                   <p className="eyebrow">
-                    กลุ่มที่ {selected.id}
+                    กลุ่มที่ {displayedSelected.id}
                   </p>
-                  <h2>{selected.source_ids.length} Customer ID · {selected.size} รูปภาพ</h2>
+                  <h2>{displayedSelected.source_ids.length} Customer ID · {displayedSelected.size} รูปภาพ</h2>
                   <p className="group-source-summary">
-                    <span><b>Technician ID:</b> {selected.technician_ids.join(", ") || "-"}</span>
-                    <span><b>Customer ID:</b> {selected.source_ids.join(", ")}</span>
+                    <span><b>Technician ID:</b> {displayedSelected.technician_ids.join(", ") || "-"}</span>
+                    <span><b>Customer ID:</b> {displayedSelected.source_ids.join(", ")}</span>
                   </p>
                 </div>
                 <span>
                   <Link2 size={16} />
-                  {selected.relationship_count} คู่
+                  {displayedSelected.subgroups.reduce(
+                    (count, subgroup) => count + subgroup.relationships.filter(
+                      (relation) => selectedClassifications === null || selectedClassifications.includes(relation.classification),
+                    ).length,
+                    0,
+                  )} คู่ที่ตรงตัวกรอง
                 </span>
               </div>
-              <GroupContent group={selected} />
+              <GroupContent group={displayedSelected} classifications={selectedClassifications} />
             </div>
           )}
-        </div>
+        </div>}
+        </>
       )}
     </section>
   );

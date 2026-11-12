@@ -102,6 +102,8 @@ React ──poll job status──► FastAPI ──read──► PostgreSQL
 
 โหมดเครื่องเดียวแยก API กับ AI worker เป็น process อยู่แล้ว แต่ทั้งคู่ยังใช้ SQLite และ local image storage ร่วมกัน การนำ API กับ worker ไปไว้คนละ VM ต้องเปลี่ยน queue เป็น Celery/Redis และเปลี่ยน storage เป็นที่เก็บไฟล์ร่วม เช่น S3/MinIO พร้อมตรวจการล็อก job ระหว่างเครื่อง
 
+สำหรับคลัง LMR บน Windows สามารถตั้ง `LMR_IMPORT__ROOT` หรือ `lmr_import.root` ให้ชี้ไปยังโฟลเดอร์ที่ API และ worker เครื่องเดียวกันเข้าถึงได้ เช่น `E:/ratchakt/All-image-LMR` หน้า Batch จะนำเข้าตามวันที่และหมวดหมู่โดยอ้าง path ต้นฉบับ ไม่คัดลอกไฟล์ หากแยก API/worker ไปคนละเครื่อง path บนไดรฟ์ E: จะใช้ร่วมกันไม่ได้ ต้องย้ายไป shared storage หรือ mount path เดียวกันก่อน
+
 ## การควบคุมจำนวน worker
 
 บน AI VM ให้เริ่ม Celery concurrency ต่ำเพื่อไม่ให้โมเดล GPU ถูกโหลดซ้ำจน VRAM เต็ม โดยทั่วไปใช้หนึ่ง Celery process ต่อ GPU และให้ระบบภายในจัด parallel SIFT ตามจำนวน vCPU

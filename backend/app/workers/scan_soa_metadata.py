@@ -15,7 +15,7 @@ from ..db.models import AnalysisJob, ImageRecord
 from ..db.session import SessionFactory
 from ..services.ai_image_metadata import serialize_ai_metadata
 from ..services.ai_model_service import AIModelService
-from ..storage.local_storage import LocalImageStorage
+from ..storage.local_storage import configured_image_storage
 
 logger = logging.getLogger(__name__)
 
@@ -25,7 +25,7 @@ async def scan_existing_images(batch_size: int = 24) -> None:
     if not settings.ai_models_lat_long.enabled:
         raise RuntimeError("The lat-long/datetime detector is disabled; enable ai_models_lat_long before scanning.")
     detector = AIModelService(settings.ai_models_lat_long)
-    storage = LocalImageStorage(settings.storage.root)
+    storage = configured_image_storage(settings)
     scanned = 0
     last_id = ""
 

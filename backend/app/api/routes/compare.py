@@ -7,7 +7,7 @@ from ...db.session import get_session
 from ...domain.schemas import RelationshipResult, StoredComparisonRequest
 from ...services.image_validation_service import ImageValidationService
 from ...services.pair_analysis_service import PairAnalysisService
-from ...storage.local_storage import LocalImageStorage
+from ...storage.local_storage import configured_image_storage
 from ..dependencies import pair_analysis_service
 
 router = APIRouter(prefix="/compare", tags=["compare"])
@@ -24,7 +24,7 @@ async def compare_stored_images(
     second = await session.get(ImageRecord, request.image_b_id)
     if first is None or second is None:
         raise HTTPException(status_code=404, detail="stored image not found")
-    storage = LocalImageStorage(get_settings().storage.root)
+    storage = configured_image_storage(get_settings())
     first_path = storage.resolve(first.id, first.storage_path)
     second_path = storage.resolve(second.id, second.storage_path)
     if first_path is None or second_path is None:

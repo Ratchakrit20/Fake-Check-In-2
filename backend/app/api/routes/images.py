@@ -18,7 +18,7 @@ from ...services.image_metadata_service import extract_capture_datetime
 from ...services.image_quality_service import ImageQualityService
 from ...services.image_validation_service import ImageValidationService
 from ...services.source_filename import parse_job_type, parse_source_reference
-from ...storage.local_storage import LocalImageStorage
+from ...storage.local_storage import configured_image_storage
 
 router = APIRouter(prefix="/images", tags=["images"])
 
@@ -35,7 +35,7 @@ async def upload_image(file: UploadFile = File(...), session: AsyncSession = Dep
         captured_at = extract_capture_datetime(image)
     existing = await session.scalar(select(ImageRecord).where(ImageRecord.sha256 == sha256))
     if existing:
-        storage = LocalImageStorage(settings.storage.root)
+        storage = configured_image_storage(settings)
         restored_path = storage.ensure_available(existing.id, existing.storage_path, metadata.suffix, content)
         existing.storage_path = str(restored_path)
         existing.image_quality_status = quality.status
@@ -61,7 +61,7 @@ async def upload_image(file: UploadFile = File(...), session: AsyncSession = Dep
             "near_black_ratio": quality.near_black_ratio,
         }
     image_id = str(uuid4())
-    storage_path = LocalImageStorage(settings.storage.root).save(image_id, metadata.suffix, content)
+    storage_path = configured_image_storage(settings).save(image_id, metadata.suffix, content)
     with Image.open(io.BytesIO(content)) as image:
         rotations = (
             PerceptualHashDetector(settings.phash.hash_size, settings.flip_detection.horizontal).calculate_rotations(image)
@@ -118,7 +118,7 @@ async def image_detail(image_id: str, session: AsyncSession = Depends(get_sessio
 async def image_content(image_id: str, session: AsyncSession = Depends(get_session)) -> FileResponse:
     record = await session.get(ImageRecord, image_id)
     settings = get_settings()
-    resolved = LocalImageStorage(settings.storage.root).resolve(record.id, record.storage_path) if record else None
+    resolved = configured_image_storage(settings).resolve(record.id, record.storage_path) if record else None
     if record is None or resolved is None:
         from fastapi import HTTPException
 

@@ -23,6 +23,8 @@ class ImageRecord(Base):
     source_job_number: Mapped[str | None] = mapped_column(String(10), nullable=True, index=True)
     source_checkin_date: Mapped[str | None] = mapped_column(String(8), nullable=True, index=True)
     source_job_type: Mapped[str | None] = mapped_column(String(20), nullable=True, index=True)
+    source_category: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
+    source_archive_date: Mapped[str | None] = mapped_column(String(10), nullable=True, index=True)
     source_captured_at: Mapped[str | None] = mapped_column(String(32), nullable=True)
     ai_metadata_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     image_quality_status: Mapped[str | None] = mapped_column(String(30), nullable=True, index=True)

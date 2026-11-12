@@ -169,6 +169,46 @@ export async function createBatch(files: File[]): Promise<{ job_id: string; stat
   return response.json();
 }
 
+export type LmrImportDate = {
+  date: string;
+  categories: string[];
+  image_count: number;
+  imported_count: number;
+  analyzed_count: number;
+  pending_count: number;
+  not_imported_count: number;
+  analysis_complete: boolean;
+};
+
+export async function getLmrImportDates(): Promise<{ available: boolean; dates: LmrImportDate[] }> {
+  const response = await fetch(`${API}/batches/lmr/dates`);
+  if (!response.ok) throw new Error("โหลดวันที่จากคลัง LMR ไม่สำเร็จ");
+  return response.json();
+}
+
+export async function importLmrDate(date: string, categories: string[] = []): Promise<{
+  job_id: string | null;
+  status: string;
+  found_count: number;
+  imported_count: number;
+  already_imported_count: number;
+  already_analyzed_count: number;
+  pending_retry_count: number;
+  scheduled_count: number;
+  invalid_count: number;
+}> {
+  const response = await fetch(`${API}/batches/lmr/import`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ date, categories }),
+  });
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: "นำเข้าคลัง LMR ไม่สำเร็จ" }));
+    throw new Error(error.message ?? error.detail ?? "นำเข้าคลัง LMR ไม่สำเร็จ");
+  }
+  return response.json();
+}
+
 export async function reanalyzeLibrary(): Promise<{ job_id: string; status: string; file_count: number }> {
   const response = await fetch(`${API}/batches/reanalyze`, { method: "POST" });
   if (!response.ok) {

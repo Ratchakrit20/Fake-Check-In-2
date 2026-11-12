@@ -39,6 +39,8 @@ async def init_database() -> None:
                 "source_job_number": "VARCHAR(10)",
                 "source_checkin_date": "VARCHAR(8)",
                 "source_job_type": "VARCHAR(20)",
+                "source_category": "VARCHAR(255)",
+                "source_archive_date": "VARCHAR(10)",
                 "source_captured_at": "VARCHAR(32)",
                 "ai_metadata_json": "TEXT",
                 "image_quality_status": "VARCHAR(30)",
@@ -78,6 +80,8 @@ async def init_database() -> None:
             await connection.execute(text("ALTER TABLE images ADD COLUMN IF NOT EXISTS source_checkin_date VARCHAR(8)"))
             await connection.execute(text("ALTER TABLE images ADD COLUMN IF NOT EXISTS source_technician_id VARCHAR(10)"))
             await connection.execute(text("ALTER TABLE images ADD COLUMN IF NOT EXISTS source_job_type VARCHAR(20)"))
+            await connection.execute(text("ALTER TABLE images ADD COLUMN IF NOT EXISTS source_category VARCHAR(255)"))
+            await connection.execute(text("ALTER TABLE images ADD COLUMN IF NOT EXISTS source_archive_date VARCHAR(10)"))
             await connection.execute(text("ALTER TABLE images ADD COLUMN IF NOT EXISTS source_captured_at VARCHAR(32)"))
             await connection.execute(text("ALTER TABLE images ADD COLUMN IF NOT EXISTS ai_metadata_json TEXT"))
             await connection.execute(text("ALTER TABLE images ADD COLUMN IF NOT EXISTS image_quality_status VARCHAR(30)"))
@@ -97,6 +101,8 @@ async def init_database() -> None:
         await connection.execute(text("CREATE INDEX IF NOT EXISTS ix_images_source_checkin_date ON images (source_checkin_date)"))
         await connection.execute(text("CREATE INDEX IF NOT EXISTS ix_images_source_technician_id ON images (source_technician_id)"))
         await connection.execute(text("CREATE INDEX IF NOT EXISTS ix_images_source_job_type ON images (source_job_type)"))
+        await connection.execute(text("CREATE INDEX IF NOT EXISTS ix_images_source_category ON images (source_category)"))
+        await connection.execute(text("CREATE INDEX IF NOT EXISTS ix_images_source_archive_date ON images (source_archive_date)"))
 
     # Backfill existing libraries created before source metadata was persisted.
     async with SessionFactory() as session:
