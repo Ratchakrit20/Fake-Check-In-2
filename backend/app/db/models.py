@@ -29,6 +29,7 @@ class ImageRecord(Base):
     ai_metadata_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     image_quality_status: Mapped[str | None] = mapped_column(String(30), nullable=True, index=True)
     image_quality_reason: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    image_quality_version: Mapped[int | None] = mapped_column(Integer, nullable=True)
     near_black_ratio: Mapped[float | None] = mapped_column(Float, nullable=True)
     storage_path: Mapped[str] = mapped_column(Text)
     file_size: Mapped[int] = mapped_column(Integer)

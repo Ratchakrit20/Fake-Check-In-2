@@ -54,6 +54,8 @@ def test_export_pdf_includes_soa_datetime_context_and_crop(tmp_path, monkeypatch
             source_job_type="new",
             ai_metadata_json=json.dumps({
                 "model": "lat-long/v1",
+                    "metadata_version": 2,
+                    "lat_long": [],
                 "datetime": ([{"bbox": [80, 40, 155, 70], "confidence": 0.98}] if image_id == "image-a" else []),
             }),
             storage_path=str(path),

@@ -18,7 +18,7 @@ from ...db.session import get_session
 from ...detectors.perceptual_hash_detector import PerceptualHashDetector
 from ...detectors.sha256_detector import SHA256Detector
 from ...services.image_metadata_service import extract_capture_datetime
-from ...services.image_quality_service import ImageQualityService
+from ...services.image_quality_service import QUALITY_VERSION, ImageQualityService
 from ...services.image_validation_service import ImageValidationService
 from ...services.job_dispatch_service import JobDispatchError, dispatch_batch_job
 from ...services.lmr_import_service import LmrImageImportService, LmrImportError
@@ -278,6 +278,7 @@ async def create_batch(
             phash_rotations_json=phash_rotations_json,
             analysis_status="QUEUED" if quality.can_compare else "UNVERIFIABLE",
             image_quality_status=quality.status,
+            image_quality_version=QUALITY_VERSION,
             image_quality_reason=quality.reason,
             near_black_ratio=quality.near_black_ratio,
         )

@@ -65,6 +65,12 @@ class AIModelService:
                 self.config.datetime_report_confidence,
             ]
             with self._inference_lock:
+                # Another pair may have filled the cache while we waited.
+                with self._cache_lock:
+                    cached = self._box_cache.get(key)
+                    if cached is not None:
+                        self._box_cache.move_to_end(key)
+                        return cached
                 results = model.predict(
                     source=np.asarray(rgb),
                     imgsz=self.config.image_size,

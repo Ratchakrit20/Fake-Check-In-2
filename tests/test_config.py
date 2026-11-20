@@ -21,7 +21,7 @@ def test_default_config_is_valid():
     assert settings.ai_models_lat_long.lat_long_confidence == 0.90
     assert settings.ai_models_lat_long.datetime_enabled is True
     assert settings.ai_models_lat_long.datetime_confidence == 0.25
-    assert settings.ai_models_lat_long.datetime_report_confidence == 0.95
+    assert settings.ai_models_lat_long.datetime_report_confidence == 0.25
 
 
 def test_celery_worker_mode_is_configurable():

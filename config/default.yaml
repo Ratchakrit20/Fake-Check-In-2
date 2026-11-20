@@ -33,14 +33,14 @@ vector_search:
   provider: faiss
   index_path: data/faiss/sscd.index.bin
   metadata_path: data/faiss/sscd.ids.json
-  top_k: 30
+  top_k: 15
 phash:
   enabled: true
   hash_size: 8
   max_hamming_distance: 10
 sift:
   enabled: true
-  max_dimension: 1280
+  max_dimension: 960
   contrast_threshold: 0.02
   edge_threshold: 15
   sigma: 1.2
@@ -85,6 +85,9 @@ image_quality:
   near_black_luminance_max: 16
   unverifiable_near_black_ratio: 0.90
   sample_max_dimension: 256
+  flat_scene_max_luminance: 80
+  flat_scene_max_range: 16
+  flat_scene_bottom_exclusion: 0.15
 relationship:
   exact_duplicate: 1.0
   very_high_threshold: 0.90

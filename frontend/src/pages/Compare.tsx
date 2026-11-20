@@ -512,7 +512,7 @@ export function Compare() {
           label="ภาพ B"
           file={second}
           storedUrl={storedPair?.secondUrl}
-          storedName={storedPair?.firstName}
+          storedName={storedPair?.secondName}
           onChange={(file) => {
             setStoredPair(null);
             setSecond(file);

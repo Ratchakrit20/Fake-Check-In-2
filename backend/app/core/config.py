@@ -125,6 +125,9 @@ class ImageQualityConfig(BaseModel):
     near_black_luminance_max: int = Field(default=16, ge=0, le=255)
     unverifiable_near_black_ratio: float = Field(default=0.90, gt=0, le=1)
     sample_max_dimension: int = Field(default=256, ge=32, le=1024)
+    flat_scene_max_luminance: int = Field(default=80, ge=0, le=255)
+    flat_scene_max_range: int = Field(default=16, ge=0, le=255)
+    flat_scene_bottom_exclusion: float = Field(default=0.15, ge=0, lt=0.5)
 
 
 class RelationshipWeights(BaseModel):

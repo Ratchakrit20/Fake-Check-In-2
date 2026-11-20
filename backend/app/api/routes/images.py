@@ -15,7 +15,7 @@ from ...db.session import get_session
 from ...detectors.perceptual_hash_detector import PerceptualHashDetector
 from ...detectors.sha256_detector import SHA256Detector
 from ...services.image_metadata_service import extract_capture_datetime
-from ...services.image_quality_service import ImageQualityService
+from ...services.image_quality_service import QUALITY_VERSION, ImageQualityService
 from ...services.image_validation_service import ImageValidationService
 from ...services.source_filename import parse_job_type, parse_source_reference
 from ...storage.local_storage import configured_image_storage
@@ -39,6 +39,7 @@ async def upload_image(file: UploadFile = File(...), session: AsyncSession = Dep
         restored_path = storage.ensure_available(existing.id, existing.storage_path, metadata.suffix, content)
         existing.storage_path = str(restored_path)
         existing.image_quality_status = quality.status
+        existing.image_quality_version = QUALITY_VERSION
         existing.image_quality_reason = quality.reason
         existing.near_black_ratio = quality.near_black_ratio
         if not quality.can_compare:
@@ -90,6 +91,7 @@ async def upload_image(file: UploadFile = File(...), session: AsyncSession = Dep
         phash_rotations_json=phash_rotations_json,
         analysis_status="HASHED" if quality.can_compare else "UNVERIFIABLE",
         image_quality_status=quality.status,
+        image_quality_version=QUALITY_VERSION,
         image_quality_reason=quality.reason,
         near_black_ratio=quality.near_black_ratio,
     )

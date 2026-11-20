@@ -28,7 +28,7 @@ from ..vector_store.faiss_store import FaissVectorStore
 from ..vector_store.phash_index import PerceptualHashIndex
 from .ai_image_metadata import serialize_ai_metadata
 from .image_metadata_service import extract_capture_datetime
-from .image_quality_service import UNVERIFIABLE, ImageQualityAssessment, ImageQualityService
+from .image_quality_service import QUALITY_VERSION, UNVERIFIABLE, ImageQualityAssessment, ImageQualityService
 from .image_source_service import resolve_image_source
 from .image_validation_service import ImageValidationService
 from .job_process_lock import job_process_lock
@@ -200,6 +200,7 @@ async def _prepare_lmr_image_metadata(
                 assessment = ImageQualityAssessment(UNVERIFIABLE, "source_file_missing", 1.0)
                 values = {
                     "image_quality_status": assessment.status,
+                    "image_quality_version": QUALITY_VERSION,
                     "image_quality_reason": assessment.reason,
                     "near_black_ratio": assessment.near_black_ratio,
                     "analysis_status": UNVERIFIABLE,
@@ -222,6 +223,7 @@ async def _prepare_lmr_image_metadata(
                         "sha256": SHA256Detector.from_bytes(content),
                         "source_captured_at": captured_at,
                         "image_quality_status": assessment.status,
+                        "image_quality_version": QUALITY_VERSION,
                         "image_quality_reason": assessment.reason,
                         "near_black_ratio": assessment.near_black_ratio,
                         "analysis_status": "QUEUED" if assessment.can_compare else UNVERIFIABLE,
@@ -232,6 +234,7 @@ async def _prepare_lmr_image_metadata(
                     assessment = ImageQualityAssessment(UNVERIFIABLE, "image_validation_failed", 1.0)
                     values = {
                         "image_quality_status": assessment.status,
+                        "image_quality_version": QUALITY_VERSION,
                         "image_quality_reason": assessment.reason,
                         "near_black_ratio": assessment.near_black_ratio,
                         "analysis_status": UNVERIFIABLE,
@@ -243,6 +246,7 @@ async def _prepare_lmr_image_metadata(
                     assessment = ImageQualityAssessment(UNVERIFIABLE, "image_decode_failed", 1.0)
                     values = {
                         "image_quality_status": assessment.status,
+                        "image_quality_version": QUALITY_VERSION,
                         "image_quality_reason": assessment.reason,
                         "near_black_ratio": assessment.near_black_ratio,
                         "analysis_status": UNVERIFIABLE,
@@ -274,7 +278,7 @@ async def _preflight_image_quality(
     service = ImageQualityService(settings.image_quality)
     pending = [
         record for record in all_records.values()
-        if record.image_quality_status is None and record.id in record_paths
+        if record.image_quality_version != QUALITY_VERSION and record.id in record_paths
     ]
     updates: list[tuple[ImageRecord, ImageQualityAssessment]] = []
     for index, record in enumerate(pending, start=1):
@@ -287,6 +291,7 @@ async def _preflight_image_quality(
             logger.exception("image quality preflight could not decode %s", record.id)
             assessment = ImageQualityAssessment(UNVERIFIABLE, "image_decode_failed", 1.0)
         record.image_quality_status = assessment.status
+        record.image_quality_version = QUALITY_VERSION
         record.image_quality_reason = assessment.reason
         record.near_black_ratio = assessment.near_black_ratio
         if assessment.status == UNVERIFIABLE:
@@ -300,6 +305,7 @@ async def _preflight_image_quality(
                         .where(ImageRecord.id == updated_record.id)
                         .values(
                             image_quality_status=result.status,
+                            image_quality_version=QUALITY_VERSION,
                             image_quality_reason=result.reason,
                             near_black_ratio=result.near_black_ratio,
                             analysis_status=UNVERIFIABLE if result.status == UNVERIFIABLE else updated_record.analysis_status,
@@ -316,6 +322,7 @@ async def _preflight_image_quality(
                     .where(ImageRecord.id == updated_record.id)
                     .values(
                         image_quality_status=result.status,
+                        image_quality_version=QUALITY_VERSION,
                         image_quality_reason=result.reason,
                         near_black_ratio=result.near_black_ratio,
                         analysis_status=UNVERIFIABLE if result.status == UNVERIFIABLE else updated_record.analysis_status,
@@ -548,7 +555,9 @@ async def process_batch_job(job_id: str, force: bool = False) -> None:
             retained_rows: list[PairwiseResult] = []
             for row in existing_rows:
                 first, second = all_records.get(row.image_a_id), all_records.get(row.image_b_id)
-                if first is not None and second is not None and same_submission(first, second):
+                if row.image_a_id in unverifiable_ids or row.image_b_id in unverifiable_ids or (
+                    first is not None and second is not None and same_submission(first, second)
+                ):
                     await session.delete(row)
                 else:
                     retained_rows.append(row)

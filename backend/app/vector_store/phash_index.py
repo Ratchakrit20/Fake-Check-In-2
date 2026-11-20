@@ -3,14 +3,13 @@ from __future__ import annotations
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 
-
 DistanceFunction = Callable[[str, str], int]
 
 
 @dataclass(slots=True)
 class _Node:
     value: str
-    children: dict[int, "_Node"] = field(default_factory=dict)
+    children: dict[int, _Node] = field(default_factory=dict)
 
 
 class PerceptualHashIndex:
@@ -26,7 +25,7 @@ class PerceptualHashIndex:
         cls,
         items: Iterable[tuple[str, str]],
         distance: DistanceFunction,
-    ) -> "PerceptualHashIndex":
+    ) -> PerceptualHashIndex:
         index = cls(distance)
         for image_id, hash_value in items:
             index.add(hash_value, image_id)
